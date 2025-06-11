@@ -150,24 +150,29 @@ describe('Integration Tests', () => {
       const game = new Game();
       let eventReceived = null;
       
-      // Register event listener
-      game.eventEmitter.on('test-event', (data) => {
-        eventReceived = data;
-      });
+      // Register event listener (using notify method from EventEmitter)
+      const mockObserver = {
+        update: (event, data) => {
+          eventReceived = { event, data };
+        }
+      };
+      game.eventEmitter.subscribe(mockObserver);
       
       // Emit event
       const testData = { type: 'test', coordinate: '34' };
-      game.eventEmitter.emit('test-event', testData);
+      game.eventEmitter.notify('test-event', testData);
       
       // Event should be received
-      expect(eventReceived).toEqual(testData);
+      expect(eventReceived).toEqual({ event: 'test-event', data: testData });
       
-      // Stats observer should track events
-      const testEvent = { type: 'player-hit', coordinate: '55' };
-      game.statsObserver.onEvent(testEvent);
+      // Stats observer should track events using update method
+      const initialStats = game.statsObserver.getStats();
+      const initialHits = initialStats.playerHits;
+      
+      game.statsObserver.update('playerHit');
       
       const stats = game.statsObserver.getStats();
-      expect(stats.totalEvents).toBe(1);
+      expect(stats.playerHits).toBe(initialHits + 1);
     });
   });
 

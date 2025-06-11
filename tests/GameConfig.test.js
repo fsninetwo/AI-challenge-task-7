@@ -56,10 +56,14 @@ describe('GameConfig', () => {
     const originalBoardSize = config.get('boardSize');
     
     // Attempt to modify (should not work due to Object.freeze)
-    expect(() => {
-      config.settings.boardSize = 20;
-    }).toThrow();
+    config.settings.boardSize = 20;
     
+    // Verify that the value hasn't changed (Object.freeze prevents modification)
     expect(config.get('boardSize')).toBe(originalBoardSize);
+    
+    // Attempt to modify nested objects
+    const originalWaterSymbol = config.get('symbols').water;
+    config.settings.symbols.water = 'X';
+    expect(config.get('symbols').water).toBe(originalWaterSymbol);
   });
 }); 

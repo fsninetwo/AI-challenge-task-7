@@ -18,6 +18,20 @@ const GameBoard = require('../src/entities/GameBoard');
 
 jest.mock('../src/config/GameConfig', () => {
   return jest.fn().mockImplementation(() => ({
+    get: jest.fn((key) => {
+      const config = {
+        boardSize: 10,
+        numShips: 3,
+        shipLength: 3,
+        symbols: {
+          water: '~',
+          ship: 'S',
+          hit: 'X',
+          miss: 'O'
+        }
+      };
+      return config[key];
+    }),
     getMessage: (key, params = {}) => {
       const messages = {
         playerHit: 'PLAYER HIT!',
@@ -33,14 +47,18 @@ jest.mock('../src/config/GameConfig', () => {
 });
 
 describe('Extended Commands', () => {
+  let originalLog, originalError;
+
   beforeEach(() => {
-    jest.spyOn(console, 'log').mockImplementation(() => {});
-    jest.spyOn(console, 'error').mockImplementation(() => {});
+    originalLog = console.log;
+    originalError = console.error;
+    console.log = jest.fn();
+    console.error = jest.fn();
   });
 
   afterEach(() => {
-    console.log.mockRestore();
-    console.error.mockRestore();
+    console.log = originalLog;
+    console.error = originalError;
   });
 
   describe('Command Base Class', () => {
@@ -72,8 +90,6 @@ describe('Extended Commands', () => {
     let ship;
 
     beforeEach(() => {
-      jest.spyOn(console, 'log').mockImplementation(() => {});
-      
       playerBoard = new GameBoard();
       cpuBoard = new GameBoard();
       ship = new Ship(['55', '56', '57']);
@@ -85,10 +101,6 @@ describe('Extended Commands', () => {
         cpuBoard: cpuBoard,
         cpuNumShips: 1
       };
-    });
-
-    afterEach(() => {
-      console.log.mockRestore();
     });
 
     test('should execute hit on ship', () => {
@@ -157,8 +169,6 @@ describe('Extended Commands', () => {
     let ship;
 
     beforeEach(() => {
-      jest.spyOn(console, 'log').mockImplementation(() => {});
-      
       playerBoard = new GameBoard();
       ship = new Ship(['33', '34', '35']);
       playerBoard.placeShip(ship, true);
@@ -175,10 +185,6 @@ describe('Extended Commands', () => {
         playerBoard: playerBoard,
         playerNumShips: 1
       };
-    });
-
-    afterEach(() => {
-      console.log.mockRestore();
     });
 
     test('should execute CPU hit', () => {
@@ -252,9 +258,6 @@ describe('Extended Commands', () => {
     let mockGame;
 
     beforeEach(() => {
-      jest.spyOn(console, 'log').mockImplementation(() => {});
-      jest.spyOn(console, 'error').mockImplementation(() => {});
-      
       mockGame = {
         placeShipsRandomly: jest.fn(),
         cpuNumShips: 3,
@@ -263,11 +266,6 @@ describe('Extended Commands', () => {
         playerGuesses: new Set(),
         cpuGuesses: new Set()
       };
-    });
-
-    afterEach(() => {
-      console.log.mockRestore();
-      console.error.mockRestore();
     });
 
     test('should execute initialization successfully', () => {
@@ -318,14 +316,8 @@ describe('Extended Commands', () => {
     let cpuBoard;
 
     beforeEach(() => {
-      jest.spyOn(console, 'log').mockImplementation(() => {});
-      
       playerBoard = new GameBoard();
       cpuBoard = new GameBoard();
-    });
-
-    afterEach(() => {
-      console.log.mockRestore();
     });
 
     test('should execute board display', () => {

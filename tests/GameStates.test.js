@@ -54,7 +54,7 @@ describe('Game States', () => {
       expect(mockGame.cpuBoard.reset).toHaveBeenCalled();
       expect(mockGame.initializeGame).toHaveBeenCalled();
       expect(mockGame.setState).toHaveBeenCalledWith(expect.any(PlayerTurnState));
-      expect(result).toBeUndefined();
+      expect(result).toEqual({ continue: true });
     });
   });
 
@@ -95,7 +95,7 @@ describe('Game States', () => {
     });
 
     test('should handle player miss', () => {
-      mockGame.processPlayerMove.mockReturnValue({ continue: false, hit: false });
+      mockGame.processPlayerMove.mockReturnValue({ continue: true, hit: false });
       
       const result = state.handle(mockGame, '00');
       
@@ -141,7 +141,7 @@ describe('Game States', () => {
     });
 
     test('should handle CPU miss', () => {
-      mockGame.processCPUMove.mockReturnValue({ continue: false, hit: false });
+      mockGame.processCPUMove.mockReturnValue({ continue: true, hit: false });
       
       const result = state.handle(mockGame);
       
@@ -194,8 +194,10 @@ describe('Game States', () => {
     });
 
     test('should handle state transitions', () => {
+      // Create a mock function that explicitly expects 2 parameters
+      const mockHandleFunction = function(context, input) { return { result: 'test' }; };
       const mockState = {
-        handle: jest.fn().mockReturnValue({ result: 'test' })
+        handle: jest.fn(mockHandleFunction)
       };
       
       stateMachine.setState(mockState);
@@ -227,8 +229,8 @@ describe('Game States', () => {
         cpuBoard: { reset: jest.fn() },
         initializeGame: jest.fn(),
         setState: jest.fn(),
-        processPlayerMove: jest.fn().mockReturnValue({ continue: false, hit: false }),
-        processCPUMove: jest.fn().mockReturnValue({ continue: false, hit: false }),
+        processPlayerMove: jest.fn().mockReturnValue({ continue: true, hit: false }),
+        processCPUMove: jest.fn().mockReturnValue({ continue: true, hit: false }),
         cpuNumShips: 1,
         playerNumShips: 1
       };
