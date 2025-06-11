@@ -14,6 +14,19 @@ const GameConfig = require('../config/GameConfig');
  * Factory class for creating ships with placement logic
  */
 class ShipFactory {
+  constructor() {
+    this.config = new GameConfig();
+  }
+
+  /**
+   * Create a ship from given locations (string coordinates)
+   * @param {string[]} locations - Array of string coordinates like ['00', '01', '02']
+   * @returns {Ship} New ship instance
+   */
+  createShip(locations) {
+    return new Ship(locations);
+  }
+
   /**
    * Create a ship from given positions
    * @param {number[][]} positions - Array of [row, col] positions
@@ -175,6 +188,140 @@ class ShipFactory {
 
     return validationResult;
   }
+
+  /**
+   * Generate all ships for the game
+   * @returns {Ship[]} Array of ships
+   */
+  generateShips() {
+    const numShips = this.config.get('numShips');
+    const shipLength = this.config.get('shipLength');
+    const boardSize = this.config.get('boardSize');
+    const ships = [];
+    const maxAttempts = 100;
+
+    for (let i = 0; i < numShips; i++) {
+      let attempts = 0;
+      let shipPlaced = false;
+
+      while (!shipPlaced && attempts < maxAttempts) {
+        const orientation = Math.random() < 0.5 ? 'horizontal' : 'vertical';
+        const { startRow, startCol } = this.generateRandomStart(orientation, boardSize, shipLength);
+        const positions = this.getShipPositions(startRow, startCol, orientation, shipLength);
+        const locations = positions.map(([row, col]) => `${row}${col}`);
+
+        if (this.isValidPlacement(locations) && !this.hasOverlap(locations, ships)) {
+          ships.push(this.createShip(locations));
+          shipPlaced = true;
+        }
+        attempts++;
+      }
+
+      if (!shipPlaced) {
+        throw new Error(`Unable to place ship ${i + 1} after ${maxAttempts} attempts`);
+      }
+    }
+
+    return ships;
+  }
+
+  /**
+   * Check if a placement is valid (continuous horizontal or vertical)
+   * @param {string[]} locations - Array of coordinate strings
+   * @returns {boolean} True if placement is valid
+   */
+  isValidPlacement(locations) {
+    if (locations.length === 0 || locations.length === 1) {
+      return true;
+    }
+
+    // Parse coordinates
+    const coords = locations.map(loc => {
+      const row = parseInt(loc[0]);
+      const col = parseInt(loc[1]);
+      return { row, col };
+    }).sort((a, b) => a.row === b.row ? a.col - b.col : a.row - b.row);
+
+    // Check if all coordinates are in the same row (horizontal)
+    const sameRow = coords.every(coord => coord.row === coords[0].row);
+    if (sameRow) {
+      // Check if columns are continuous
+      for (let i = 1; i < coords.length; i++) {
+        if (coords[i].col !== coords[i - 1].col + 1) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    // Check if all coordinates are in the same column (vertical)
+    const sameCol = coords.every(coord => coord.col === coords[0].col);
+    if (sameCol) {
+      // Check if rows are continuous
+      for (let i = 1; i < coords.length; i++) {
+        if (coords[i].row !== coords[i - 1].row + 1) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if locations overlap with existing ships
+   * @param {string[]} locations - Array of coordinate strings
+   * @param {Ship[]} existingShips - Array of existing ships
+   * @returns {boolean} True if there's an overlap
+   */
+  hasOverlap(locations, existingShips) {
+    const existingLocations = new Set();
+    existingShips.forEach(ship => {
+      ship.locations.forEach(loc => existingLocations.add(loc));
+    });
+
+    return locations.some(loc => existingLocations.has(loc));
+  }
+
+  /**
+   * Generate random starting position for ship placement
+   * @param {string} orientation - 'horizontal' or 'vertical'
+   * @param {number} boardSize - Size of the board
+   * @param {number} shipLength - Length of the ship
+   * @returns {Object} Object with startRow and startCol properties
+   */
+  generateRandomStart(orientation, boardSize, shipLength) {
+    if (orientation === 'horizontal') {
+      return {
+        startRow: Math.floor(Math.random() * boardSize),
+        startCol: Math.floor(Math.random() * (boardSize - shipLength + 1))
+      };
+    } else {
+      return {
+        startRow: Math.floor(Math.random() * (boardSize - shipLength + 1)),
+        startCol: Math.floor(Math.random() * boardSize)
+      };
+    }
+  }
+
+  /**
+   * Calculate all positions for a ship given start position and orientation
+   * @param {number} startRow - Starting row
+   * @param {number} startCol - Starting column
+   * @param {string} orientation - 'horizontal' or 'vertical'
+   * @param {number} shipLength - Length of the ship
+   * @returns {number[][]} Array of [row, col] positions
+   */
+  getShipPositions(startRow, startCol, orientation, shipLength) {
+    return Array.from({length: shipLength}, (_, i) => {
+      if (orientation === 'horizontal') {
+        return [startRow, startCol + i];
+      } else {
+        return [startRow + i, startCol];
+      }
+    });
+  }
 }
 
-module.exports = ShipFactory; 
+module.exports = ShipFactory;

@@ -29,7 +29,7 @@ class ValidationStrategy {
 class InputFormatValidator extends ValidationStrategy {
   validate(input) {
     const config = new GameConfig();
-    if (!input || input.length !== 2) {
+    if (typeof input !== 'string' || !input || input.length !== 2) {
       return { isValid: false, message: config.getMessage('invalidInput') };
     }
     return { isValid: true };

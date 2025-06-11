@@ -38,6 +38,11 @@ class GameConfig {
       }
     };
     
+    // Make settings deeply immutable
+    Object.freeze(this.settings.symbols);
+    Object.freeze(this.settings.messages);
+    Object.freeze(this.settings);
+    
     GameConfig.instance = this;
     Object.freeze(this);
   }

@@ -19,6 +19,7 @@ class GameState {
    */
   constructor(context) {
     this.context = context;
+    this.name = 'BaseState';
   }
   
   /**
@@ -33,7 +34,7 @@ class GameState {
    * @returns {string} State name
    */
   getName() {
-    return this.constructor.name;
+    return this.name || this.constructor.name;
   }
 }
 
@@ -70,12 +71,21 @@ class PlayingState extends GameState {
 class GameOverState extends GameState {
   /**
    * Create game over state
-   * @param {Game} context - Game context
-   * @param {string} winner - Winner ('player' or 'cpu')
+   * @param {Game|string} contextOrWinner - Game context or winner string
+   * @param {string} [winner] - Winner ('player' or 'cpu') if first param is context
    */
-  constructor(context, winner) {
-    super(context);
-    this.winner = winner;
+  constructor(contextOrWinner, winner) {
+    // Handle both constructor signatures
+    if (typeof contextOrWinner === 'string') {
+      // Called with just winner (for tests)
+      super(null);
+      this.winner = contextOrWinner;
+    } else {
+      // Called with context and winner (for normal usage)
+      super(contextOrWinner);
+      this.winner = winner;
+    }
+    this.name = 'GameOver';
     this.endTime = new Date();
   }
   
@@ -84,15 +94,24 @@ class GameOverState extends GameState {
    */
   handle() {
     const config = new GameConfig();
+    let message;
     
     if (this.winner === 'player') {
-      console.log(config.getMessage('playerWin'));
+      message = config.getMessage('playerWin');
+      console.log(message);
     } else {
-      console.log(config.getMessage('cpuWin'));
+      message = config.getMessage('cpuWin');
+      console.log(message);
     }
     
-    this.context.displayBoards();
-    this.context.endGame();
+    if (this.context && this.context.displayBoards) {
+      this.context.displayBoards();
+    }
+    if (this.context && this.context.endGame) {
+      this.context.endGame();
+    }
+    
+    return { continue: false, winner: this.winner, message };
   }
 
   /**
@@ -111,24 +130,123 @@ class GameOverState extends GameState {
 /**
  * State when game is initializing
  */
-class InitializingState extends GameState {
+class InitializationState extends GameState {
+  constructor(context) {
+    super(context);
+    this.name = 'Initialization';
+  }
+  
   /**
    * Handle initialization - set up boards and ships
    */
-  handle() {
+  handle(context) {
     try {
       console.log('Initializing game...');
-      this.context.placeShipsRandomly();
-      console.log("\nLet's play Sea Battle!");
-      console.log(`Try to sink the ${this.context.cpuNumShips} enemy ships.`);
+      const gameContext = context || this.context;
       
-      // Transition to playing state
-      this.context.setState(new PlayingState(this.context));
-      this.context.currentState.handle();
+      if (gameContext && gameContext.playerBoard && gameContext.playerBoard.reset) {
+        gameContext.playerBoard.reset();
+      }
+      if (gameContext && gameContext.cpuBoard && gameContext.cpuBoard.reset) {
+        gameContext.cpuBoard.reset();
+      }
+      
+      if (gameContext && gameContext.initializeGame) {
+        gameContext.initializeGame();
+      } else if (gameContext && gameContext.placeShipsRandomly) {
+        gameContext.placeShipsRandomly();
+      }
+      
+      console.log("\nLet's play Sea Battle!");
+      console.log(`Try to sink the ${gameContext ? gameContext.cpuNumShips || 3 : 3} enemy ships.`);
+      
+      // Transition to player turn state
+      if (gameContext && gameContext.setState) {
+        gameContext.setState(new PlayerTurnState(gameContext));
+      }
+      return { continue: true };
     } catch (error) {
       console.error('Failed to initialize game:', error.message);
-      this.context.setState(new ErrorState(this.context, error));
+      const gameContext = context || this.context;
+      if (gameContext && gameContext.setState) {
+        gameContext.setState(new ErrorState(gameContext, error));
+      }
+      return { continue: false, error: error.message };
     }
+  }
+}
+
+/**
+ * State for player's turn
+ */
+class PlayerTurnState extends GameState {
+  constructor(context) {
+    super(context);
+    this.name = 'PlayerTurn';
+  }
+  
+  /**
+   * Handle player turn
+   */
+  handle(contextOrInput, input) {
+    // Handle both calling conventions
+    const gameContext = (contextOrInput && typeof contextOrInput === 'object' && contextOrInput.processPlayerMove) 
+      ? contextOrInput 
+      : this.context;
+    const playerInput = input || (typeof contextOrInput === 'string' ? contextOrInput : null);
+    
+    if (!gameContext || !gameContext.processPlayerMove) {
+      return { continue: false, error: 'No game context available' };
+    }
+    
+    const result = gameContext.processPlayerMove(playerInput);
+    
+    if (result.hit && gameContext.cpuNumShips === 0) {
+      gameContext.setState(new GameOverState(gameContext, 'player'));
+      return { continue: false, winner: 'player' };
+    }
+    
+    if (result.continue) {
+      gameContext.setState(new CPUTurnState(gameContext));
+      return { continue: true, hit: result.hit };
+    }
+    
+    return { continue: true, hit: result.hit };
+  }
+}
+
+/**
+ * State for CPU's turn
+ */
+class CPUTurnState extends GameState {
+  constructor(context) {
+    super(context);
+    this.name = 'CPUTurn';
+  }
+  
+  /**
+   * Handle CPU turn
+   */
+  handle(context) {
+    const gameContext = context || this.context;
+    
+    if (!gameContext || !gameContext.processCPUMove) {
+      return { continue: false, error: 'No game context available' };
+    }
+    
+    const result = gameContext.processCPUMove();
+    
+    if (result.hit && gameContext.playerNumShips === 0) {
+      gameContext.setState(new GameOverState(gameContext, 'cpu'));
+      return { continue: false, winner: 'cpu' };
+    }
+    
+    if (result.continue) {
+      gameContext.setState(new PlayerTurnState(gameContext));
+      return { continue: true, hit: result.hit };
+    }
+    
+    return { continue: true, hit: result.hit };
   }
 }
 
@@ -194,10 +312,10 @@ class ErrorState extends GameState {
 /**
  * State machine manager for game state transitions
  */
-class StateMachine {
+class GameStateMachine {
   constructor(initialState) {
-    this.currentState = initialState;
-    this.stateHistory = [initialState];
+    this.currentState = initialState || new InitializationState();
+    this.stateHistory = [this.currentState];
     this.maxHistorySize = 10;
   }
 
@@ -205,8 +323,10 @@ class StateMachine {
    * Transition to a new state
    * @param {GameState} newState - State to transition to
    */
-  transition(newState) {
-    console.log(`State transition: ${this.currentState.getName()} -> ${newState.getName()}`);
+  setState(newState) {
+    if (this.currentState && newState && typeof newState.getName === 'function') {
+      console.log(`State transition: ${this.currentState.getName()} -> ${newState.getName()}`);
+    }
     
     this.currentState = newState;
     
@@ -220,16 +340,33 @@ class StateMachine {
   /**
    * Execute current state
    */
-  execute() {
-    this.currentState.handle();
+  handle(context, input) {
+    if (this.currentState.handle.length === 0) {
+      // State doesn't expect arguments
+      return this.currentState.handle();
+    } else if (this.currentState.handle.length === 1) {
+      // State expects one argument (context or input)
+      return this.currentState.handle(context || input);
+    } else {
+      // State expects multiple arguments
+      return this.currentState.handle(context, input);
+    }
   }
 
   /**
    * Get current state name
    * @returns {string} Current state name
    */
-  getCurrentStateName() {
-    return this.currentState.getName();
+  getStateName() {
+    return this.currentState ? this.currentState.getName() : 'Unknown';
+  }
+
+  /**
+   * Get current state
+   * @returns {GameState} Current state
+   */
+  getCurrentState() {
+    return this.currentState;
   }
 
   /**
@@ -252,10 +389,12 @@ class StateMachine {
 
 module.exports = {
   GameState,
-  PlayingState,
+  InitializationState,
+  PlayerTurnState,
+  CPUTurnState,
   GameOverState,
-  InitializingState,
+  GameStateMachine,
+  PlayingState,
   PausedState,
-  ErrorState,
-  StateMachine
+  ErrorState
 }; 
