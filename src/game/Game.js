@@ -24,7 +24,7 @@ const { InitializationState, PlayerTurnState, CPUTurnState, GameOverState, GameS
  * Main Game class that orchestrates the Sea Battle game
  */
 class Game {
-  constructor() {
+  constructor(validatorFactory) {
     // Configuration
     this.config = new GameConfig();
     
@@ -84,6 +84,9 @@ class Game {
     
     // Setup event system
     this.setupObservers();
+    
+    // Validator factory for testability
+    this.validatorFactory = validatorFactory || (() => new InputValidator());
   }
   
   /**
@@ -183,11 +186,10 @@ class Game {
    */
   processPlayerTurn(input) {
     // Validate input using strategy pattern
-    const validator = new InputValidator()
+    const validator = this.validatorFactory()
       .addStrategy(new InputFormatValidator())
       .addStrategy(new CoordinateRangeValidator())
       .addStrategy(new DuplicateGuessValidator(this.playerGuesses));
-    
     const validation = validator.validate(input);
     if (!validation.isValid) {
       console.log(validation.message);
@@ -256,7 +258,11 @@ class Game {
     }
 
     // Validate input using strategy pattern
-    const validation = this.inputValidator.validate(input);
+    const validator = this.validatorFactory()
+      .addStrategy(new InputFormatValidator())
+      .addStrategy(new CoordinateRangeValidator())
+      .addStrategy(new DuplicateGuessValidator(this.playerGuesses));
+    const validation = validator.validate(input);
     if (!validation.isValid) {
       return { continue: false, hit: false, error: validation.message };
     }
