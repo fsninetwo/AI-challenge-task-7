@@ -456,7 +456,7 @@ class CPUMoveCommand extends Command {
       } else {
         this.aiContext.switchToTarget(row, col, this.gameState);
       }
-    } else {
+        } else {
       this.gameState.playerBoard.markMiss(row, col);
       console.log(config.getMessage('cpuMiss', { coordinate: this.coordinate }));
     }
@@ -504,9 +504,9 @@ class GameStatsObserver extends Observer {
       case 'turnComplete':
         this.stats.turnsPlayed++;
         break;
+      }
     }
-  }
-  
+
   getStats() {
     return { ...this.stats };
   }
@@ -657,9 +657,9 @@ class Game {
     if (!validation.isValid) {
       console.log(validation.message);
       this.currentState.handle();
-      return;
-    }
-    
+        return;
+      }
+
     const playerCommand = new PlayerMoveCommand(input, {
       playerGuesses: this.playerGuesses,
       cpuBoard: this.cpuBoard,

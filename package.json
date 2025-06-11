@@ -9,7 +9,9 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --inspect src/index.js",
-    "test": "echo \"Tests not implemented yet\" && exit 0",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "lint": "echo \"Linting not configured yet\" && exit 0",
     "docs": "echo \"Documentation generation not configured yet\" && exit 0"
   },
@@ -36,6 +38,18 @@
     "url": "https://github.com/example/sea-battle-modularized/issues"
   },
   "homepage": "https://github.com/example/sea-battle-modularized#readme",
-  "devDependencies": {},
-  "dependencies": {}
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "dependencies": {},
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": ["**/tests/**/*.test.js"],
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/index.js"
+    ],
+    "coverageDirectory": "coverage",
+    "coverageReporters": ["text", "lcov", "html"]
+  }
 } 
