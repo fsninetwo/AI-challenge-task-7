@@ -1,0 +1,41 @@
+{
+  "name": "sea-battle-modularized",
+  "version": "2.0.0",
+  "description": "A modularized Sea Battle game implementing design patterns and separation of concerns",
+  "main": "src/index.js",
+  "bin": {
+    "sea-battle": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --inspect src/index.js",
+    "test": "echo \"Tests not implemented yet\" && exit 0",
+    "lint": "echo \"Linting not configured yet\" && exit 0",
+    "docs": "echo \"Documentation generation not configured yet\" && exit 0"
+  },
+  "keywords": [
+    "game",
+    "battleship",
+    "sea-battle",
+    "design-patterns",
+    "modular",
+    "console-game",
+    "javascript",
+    "node"
+  ],
+  "author": "Sea Battle Development Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=12.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/example/sea-battle-modularized.git"
+  },
+  "bugs": {
+    "url": "https://github.com/example/sea-battle-modularized/issues"
+  },
+  "homepage": "https://github.com/example/sea-battle-modularized#readme",
+  "devDependencies": {},
+  "dependencies": {}
+} 
