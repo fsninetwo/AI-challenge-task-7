@@ -67,6 +67,7 @@ class Game extends EventEmitter {
       
       await this.placeShipsRandomly();
       this.setState(new SetupState(this));
+      await this.currentState.enter();
       this.notify('gameStart');
       
       return { success: true };
@@ -118,17 +119,18 @@ class Game extends EventEmitter {
       ship.hit(input);
       const { row, col } = this.cpuBoard.parseCoordinate(input);
       this.cpuBoard.markHit(row, col);
-      if (ship.isSunk()) {
+      const wasSunk = ship.isSunk();
+      if (wasSunk) {
         this.cpuNumShips--;
         this.notify('shipSunk', { player: 'player' });
       }
       this.notify('playerHit', { coordinate: input });
-      return { success: true, hit: true, sunk: ship.isSunk() };
+      return { success: true, hit: true, sunk: wasSunk };
     } else {
       const { row, col } = this.cpuBoard.parseCoordinate(input);
       this.cpuBoard.markMiss(row, col);
       this.notify('playerMiss', { coordinate: input });
-      return { success: true, hit: false };
+      return { success: true, hit: false, sunk: false };
     }
   }
 
@@ -142,19 +144,20 @@ class Game extends EventEmitter {
       ship.hit(coordinate);
       const { row, col } = this.playerBoard.parseCoordinate(coordinate);
       this.playerBoard.markHit(row, col);
-      if (ship.isSunk()) {
+      const wasSunk = ship.isSunk();
+      if (wasSunk) {
         this.playerNumShips--;
         this.notify('shipSunk', { player: 'cpu' });
       }
       this.notify('cpuHit', { coordinate });
       this.aiContext.updateResult(true, coordinate);
-      return { success: true, hit: true, sunk: ship.isSunk(), coordinate };
+      return { success: true, hit: true, sunk: wasSunk, coordinate };
     } else {
       const { row, col } = this.playerBoard.parseCoordinate(coordinate);
       this.playerBoard.markMiss(row, col);
       this.notify('cpuMiss', { coordinate });
       this.aiContext.updateResult(false, coordinate);
-      return { success: true, hit: false, coordinate };
+      return { success: true, hit: false, sunk: false, coordinate };
     }
   }
 
@@ -163,9 +166,6 @@ class Game extends EventEmitter {
       this.currentState.exit();
     }
     this.currentState = state;
-    if (state) {
-      state.enter();
-    }
   }
 
   displayBoards() {
@@ -201,19 +201,20 @@ class Game extends EventEmitter {
       cpuNumShips: this.cpuNumShips,
       playerGuesses: Array.from(this.playerGuesses),
       cpuGuesses: Array.from(this.cpuGuesses),
-      totalTurns: this.statsObserver.getStats().turnsPlayed,
+      totalTurns: this.playerGuesses.size + this.cpuGuesses.size,
       playerMoves: this.playerGuesses.size,
       cpuMoves: this.cpuGuesses.size
     };
   }
 
   reset() {
-    this.playerBoard = new GameBoard();
-    this.cpuBoard = new GameBoard();
+    this.playerBoard.reset();
+    this.cpuBoard.reset();
     this.playerGuesses.clear();
     this.cpuGuesses.clear();
     this.playerNumShips = 0;
     this.cpuNumShips = 0;
+    this.aiContext.reset();
     this.currentState = null;
   }
 
@@ -226,13 +227,12 @@ class Game extends EventEmitter {
   async start() {
     try {
       await this.initialize();
-      this.setState(new PlayerTurnState(this));
-      if (this.currentState) {
+      while (!this.checkGameOver()) {
         await this.currentState.handle();
       }
     } catch (error) {
-      console.error('Game error:', error.message);
-      throw error;
+      console.error('Game error:', error);
+      this.endGame('error');
     }
   }
 }
