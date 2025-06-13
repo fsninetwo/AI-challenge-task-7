@@ -84,16 +84,42 @@ class Game extends EventEmitter {
       
       // Place ships on player board
       for (const pattern of patterns) {
-        const playerShip = ShipFactory.createRandomShip(this.playerBoard, pattern.length);
-        const placed = this.playerBoard.placeShip(playerShip, true);
-        if (placed) this.playerNumShips++;
+        let playerShip;
+        let placed = false;
+        let attempts = 0;
+        const maxAttempts = 100;
+
+        while (!placed && attempts < maxAttempts) {
+          playerShip = ShipFactory.createRandomShip(this.playerBoard, pattern.length);
+          placed = this.playerBoard.placeShip(playerShip, true);
+          attempts++;
+        }
+
+        if (placed) {
+          this.playerNumShips++;
+        } else {
+          throw new Error('Failed to place player ship after maximum attempts');
+        }
       }
       
       // Place ships on CPU board
       for (const pattern of patterns) {
-        const cpuShip = ShipFactory.createRandomShip(this.cpuBoard, pattern.length);
-        const placed = this.cpuBoard.placeShip(cpuShip, false);
-        if (placed) this.cpuNumShips++;
+        let cpuShip;
+        let placed = false;
+        let attempts = 0;
+        const maxAttempts = 100;
+
+        while (!placed && attempts < maxAttempts) {
+          cpuShip = ShipFactory.createRandomShip(this.cpuBoard, pattern.length);
+          placed = this.cpuBoard.placeShip(cpuShip, false);
+          attempts++;
+        }
+
+        if (placed) {
+          this.cpuNumShips++;
+        } else {
+          throw new Error('Failed to place CPU ship after maximum attempts');
+        }
       }
       
       return { success: true };
