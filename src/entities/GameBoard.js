@@ -22,6 +22,8 @@ class GameBoard {
     this.size = size || config.get('boardSize');
     this.grid = this.initializeGrid();
     this.ships = [];
+    this.hits = new Set();
+    this.misses = new Set();
     this.hitCount = 0;
     this.missCount = 0;
   }
@@ -50,16 +52,36 @@ class GameBoard {
    * Place a ship on the board
    * @param {Ship} ship - Ship to place
    * @param {boolean} isVisible - Whether to show ship on grid (for player board)
+   * @returns {boolean} True if ship was placed successfully
    */
   placeShip(ship, isVisible = false) {
-    const config = new GameConfig();
-    this.ships.push(ship);
-    
-    if (isVisible) {
-      ship.locations.forEach(location => {
-        const [row, col] = this.parseCoordinate(location);
-        this.grid[row][col] = config.get('symbols').ship;
-      });
+    try {
+      // Validate ship placement
+      for (const location of ship.locations) {
+        const { row, col } = this.parseCoordinate(location);
+        if (!this.isValidCoordinate(row, col)) {
+          return false;
+        }
+        // Check for ship overlap
+        if (this.getShipAt(location)) {
+          return false;
+        }
+      }
+
+      const config = new GameConfig();
+      this.ships.push(ship);
+      
+      if (isVisible) {
+        ship.locations.forEach(location => {
+          const { row, col } = this.parseCoordinate(location);
+          this.grid[row][col] = config.get('symbols').ship;
+        });
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Error placing ship:', error);
+      return false;
     }
   }
 
@@ -69,9 +91,12 @@ class GameBoard {
    * @param {number} col - Column coordinate
    */
   markHit(row, col) {
-    const config = new GameConfig();
-    this.grid[row][col] = config.get('symbols').hit;
-    this.hitCount++;
+    if (this.isValidCoordinate(row, col)) {
+      const config = new GameConfig();
+      this.grid[row][col] = config.get('symbols').hit;
+      this.hits.add(`${row}${col}`);
+      this.hitCount++;
+    }
   }
 
   /**
@@ -80,18 +105,29 @@ class GameBoard {
    * @param {number} col - Column coordinate
    */
   markMiss(row, col) {
-    const config = new GameConfig();
-    this.grid[row][col] = config.get('symbols').miss;
-    this.missCount++;
+    if (this.isValidCoordinate(row, col)) {
+      const config = new GameConfig();
+      this.grid[row][col] = config.get('symbols').miss;
+      this.misses.add(`${row}${col}`);
+      this.missCount++;
+    }
   }
 
   /**
-   * Parse a coordinate string into row and column integers
+   * Parse a coordinate string into row and column object
    * @param {string} coordinate - Coordinate string (e.g., '05')
-   * @returns {number[]} Array containing [row, col]
+   * @returns {Object} Object containing row and col properties
    */
   parseCoordinate(coordinate) {
-    return [parseInt(coordinate[0]), parseInt(coordinate[1])];
+    if (!coordinate || typeof coordinate !== 'string' || coordinate.length !== 2) {
+      return { row: null, col: null };
+    }
+    const row = parseInt(coordinate[0]);
+    const col = parseInt(coordinate[1]);
+    if (isNaN(row) || isNaN(col) || !this.isValidCoordinate(row, col)) {
+      return { row: null, col: null };
+    }
+    return { row, col };
   }
 
   /**
@@ -137,7 +173,9 @@ class GameBoard {
       remainingShips: totalShips - sunkShips,
       totalHits,
       totalMisses: this.missCount,
-      accuracy: totalHits / (totalHits + this.missCount) * 100 || 0
+      accuracy: totalHits / (totalHits + this.missCount) * 100 || 0,
+      hits: Array.from(this.hits),
+      misses: Array.from(this.misses)
     };
   }
 
@@ -155,6 +193,8 @@ class GameBoard {
   reset() {
     this.grid = this.initializeGrid();
     this.ships = [];
+    this.hits.clear();
+    this.misses.clear();
     this.hitCount = 0;
     this.missCount = 0;
   }

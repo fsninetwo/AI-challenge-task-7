@@ -17,6 +17,11 @@ class GameConfig {
       boardSize: 10,
       numShips: 3,
       shipLength: 3,
+      shipPatterns: [
+        { length: 3, pattern: 'horizontal' },
+        { length: 3, pattern: 'horizontal' },
+        { length: 3, pattern: 'horizontal' }
+      ],
       symbols: {
         water: '~',
         ship: 'S',
@@ -41,6 +46,7 @@ class GameConfig {
     // Make settings deeply immutable
     Object.freeze(this.settings.symbols);
     Object.freeze(this.settings.messages);
+    Object.freeze(this.settings.shipPatterns);
     Object.freeze(this.settings);
     
     GameConfig.instance = this;

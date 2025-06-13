@@ -15,10 +15,11 @@ const GameConfig = require('../config/GameConfig');
 class AIStrategy {
   /**
    * Make a move decision based on current game state
-   * @param {Object} gameState - Current game state
+   * @param {Set} previousGuesses - Set of previous guesses
+   * @param {GameBoard} playerBoard - Player's game board
    * @returns {Object} Move decision with coordinate and mode
    */
-  makeMove(gameState) {
+  makeMove(previousGuesses, playerBoard) {
     throw new Error('AI Strategy must implement makeMove method');
   }
 
@@ -40,7 +41,7 @@ class HuntStrategy extends AIStrategy {
     this.previousMoves = new Set();
   }
 
-  makeMove(gameState) {
+  makeMove(previousGuesses, playerBoard) {
     const config = new GameConfig();
     const boardSize = config.get('boardSize');
     let guess;
@@ -50,7 +51,7 @@ class HuntStrategy extends AIStrategy {
       const row = Math.floor(Math.random() * boardSize);
       const col = Math.floor(Math.random() * boardSize);
       guess = `${row}${col}`;
-    } while (gameState.cpuGuesses.has(guess));
+    } while (previousGuesses.has(guess));
     
     this.previousMoves.add(guess);
     
@@ -84,9 +85,11 @@ class TargetStrategy extends AIStrategy {
    * Add adjacent targets after a successful hit
    * @param {number} row - Row of the hit
    * @param {number} col - Column of the hit
-   * @param {Object} gameState - Current game state
+   * @param {Set} previousGuesses - Set of previous guesses
    */
-  addTargets(row, col, gameState) {
+  addTargets(row, col, previousGuesses) {
+    const config = new GameConfig();
+    const boardSize = config.get('boardSize');
     const adjacentCells = [
       { r: row - 1, c: col, direction: 'north' },
       { r: row + 1, c: col, direction: 'south' },
@@ -96,7 +99,7 @@ class TargetStrategy extends AIStrategy {
     
     // Add valid adjacent cells to target queue
     adjacentCells
-      .filter(({r, c}) => this.isValidTarget(r, c, gameState))
+      .filter(({r, c}) => this.isValidTarget(r, c, boardSize, previousGuesses))
       .forEach(({r, c, direction}) => {
         const coord = `${r}${c}`;
         if (!this.targetQueue.some(target => target.coordinate === coord)) {
@@ -117,31 +120,30 @@ class TargetStrategy extends AIStrategy {
    * Check if a coordinate is a valid target
    * @param {number} row - Row coordinate
    * @param {number} col - Column coordinate
-   * @param {Object} gameState - Current game state
+   * @param {number} boardSize - Size of the game board
+   * @param {Set} previousGuesses - Set of previous guesses
    * @returns {boolean} True if valid target
    */
-  isValidTarget(row, col, gameState) {
-    const config = new GameConfig();
-    const boardSize = config.get('boardSize');
+  isValidTarget(row, col, boardSize, previousGuesses) {
     return row >= 0 && row < boardSize && 
            col >= 0 && col < boardSize && 
-           !gameState.cpuGuesses.has(`${row}${col}`);
+           !previousGuesses.has(`${row}${col}`);
   }
   
-  makeMove(gameState) {
+  makeMove(previousGuesses, playerBoard) {
     // If no targets in queue, fall back to hunt strategy
     if (this.targetQueue.length === 0) {
-      return new HuntStrategy().makeMove(gameState);
+      return new HuntStrategy().makeMove(previousGuesses, playerBoard);
     }
     
     // Get highest priority target
     let target;
     do {
       target = this.targetQueue.shift();
-      if (this.targetQueue.length === 0 && gameState.cpuGuesses.has(target?.coordinate)) {
-        return new HuntStrategy().makeMove(gameState);
+      if (this.targetQueue.length === 0 && previousGuesses.has(target?.coordinate)) {
+        return new HuntStrategy().makeMove(previousGuesses, playerBoard);
       }
-    } while (target && gameState.cpuGuesses.has(target.coordinate) && this.targetQueue.length > 0);
+    } while (target && previousGuesses.has(target.coordinate) && this.targetQueue.length > 0);
     
     return { 
       coordinate: target.coordinate, 
@@ -246,93 +248,71 @@ class AIContext {
       shipsSunk: 0
     };
   }
-  
+
   /**
-   * Switch to hunt mode
+   * Switch to hunt strategy
    */
   switchToHunt() {
     this.currentStrategy = this.huntStrategy;
-    this.targetStrategy.reset();
   }
-  
+
   /**
-   * Switch to target mode after a hit
-   * @param {number} row - Row of the hit
-   * @param {number} col - Column of the hit
-   * @param {Object} gameState - Current game state
+   * Switch to target strategy
+   * @param {number} row - Row of hit
+   * @param {number} col - Column of hit
+   * @param {Set} previousGuesses - Set of previous guesses
    */
-  switchToTarget(row, col, gameState) {
+  switchToTarget(row, col, previousGuesses) {
     this.currentStrategy = this.targetStrategy;
-    this.targetStrategy.addTargets(row, col, gameState);
+    this.targetStrategy.addTargets(row, col, previousGuesses);
   }
-  
+
   /**
    * Make a move using current strategy
-   * @param {Object} gameState - Current game state
+   * @param {Set} previousGuesses - Set of previous guesses
+   * @param {GameBoard} playerBoard - Player's game board
    * @returns {Object} Move decision
    */
-  makeMove(gameState) {
-    const move = this.currentStrategy.makeMove(gameState);
-    
-    // Log move for analysis
+  makeMove(previousGuesses, playerBoard) {
+    const move = this.currentStrategy.makeMove(previousGuesses, playerBoard);
     this.moveHistory.push({
       ...move,
-      timestamp: Date.now(),
-      gameState: {
-        playerShips: gameState.playerNumShips,
-        cpuShips: gameState.cpuNumShips
-      }
+      timestamp: Date.now()
     });
-    
     return move;
   }
 
   /**
-   * Update AI context based on move result
-   * @param {string} coordinate - Coordinate that was attacked
-   * @param {boolean} wasHit - Whether the attack was a hit
-   * @param {boolean} wasSunk - Whether a ship was sunk
+   * Update strategy based on move result
+   * @param {boolean} wasHit - Whether the move was a hit
+   * @param {string} coordinate - The coordinate that was attacked
    */
-  updateResult(coordinate, wasHit, wasSunk) {
+  updateResult(wasHit, coordinate) {
     // Update performance stats
     if (wasHit) {
       this.performanceStats.hits++;
-      if (wasSunk) {
-        this.performanceStats.shipsSunk++;
-      }
+      const [row, col] = coordinate.split('').map(Number);
+      this.switchToTarget(row, col, new Set(this.moveHistory.map(m => m.coordinate)));
     } else {
       this.performanceStats.misses++;
-    }
-
-    // Update current strategy
-    if (this.currentStrategy instanceof TargetStrategy) {
-      this.currentStrategy.updateStrategy(coordinate, wasHit, wasSunk);
-    }
-
-    // Update last move result
-    if (this.moveHistory.length > 0) {
-      const lastMove = this.moveHistory[this.moveHistory.length - 1];
-      lastMove.result = { wasHit, wasSunk };
     }
   }
 
   /**
-   * Get AI performance statistics
-   * @returns {Object} Performance statistics
+   * Get performance statistics
+   * @returns {Object} Performance stats
    */
   getStats() {
-    const totalMoves = this.performanceStats.hits + this.performanceStats.misses;
     return {
       ...this.performanceStats,
-      totalMoves,
-      accuracy: totalMoves > 0 ? (this.performanceStats.hits / totalMoves * 100) : 0,
-      currentStrategy: this.currentStrategy.getName(),
-      moveHistory: this.moveHistory.slice(-10) // Last 10 moves
+      totalMoves: this.moveHistory.length,
+      accuracy: this.performanceStats.hits / this.moveHistory.length || 0,
+      currentStrategy: this.currentStrategy.getName()
     };
   }
 
   /**
-   * Reset AI context to initial state
+   * Reset AI state
    */
   reset() {
     this.huntStrategy.reset();
@@ -348,9 +328,4 @@ class AIContext {
   }
 }
 
-module.exports = {
-  AIStrategy,
-  HuntStrategy,
-  TargetStrategy,
-  AIContext
-}; 
+module.exports = { AIStrategy, HuntStrategy, TargetStrategy, AIContext }; 
