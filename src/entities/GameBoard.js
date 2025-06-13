@@ -136,9 +136,10 @@ class GameBoard {
    * @returns {string[]} Array of strings representing board rows
    */
   display() {
-    const header = '  ' + Array.from({length: this.size}, (_, i) => i).join(' ');
-    const rows = this.grid.map((row, i) => `${i} ${row.join(' ')}`);
-    return [header, ...rows];
+    const header = '   ' + Array.from({length: this.size}, (_, i) => i).join(' ');
+    const separator = '   ' + '-'.repeat(this.size * 2 - 1);
+    const rows = this.grid.map((row, i) => `${i < 10 ? ' ' : ''}${i} |${row.join(' ')}`);
+    return [header, separator, ...rows];
   }
   
   /**

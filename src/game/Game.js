@@ -228,14 +228,40 @@ class Game extends EventEmitter {
   }
 
   async start() {
+    console.log('==================================================');
+    console.log('      🚢 Sea Battle Game v2.0 🚢');
+    console.log('   Modularized with Design Patterns');
+    console.log('==================================================\n');
+    
     try {
       await this.initialize();
+      console.log('\nLet\'s play Sea Battle!');
+      console.log('Try to sink the 3 enemy ships.');
+      this.displayBoards();
+      
       while (!this.checkGameOver()) {
-        await this.currentState.handle();
+        const input = await this.requestPlayerInput();
+        if (!input) continue;
+        
+        const result = await this.processPlayerMove(input);
+        if (!result.success) {
+          console.log(result.error);
+          continue;
+        }
+        
+        this.displayBoards();
+        
+        if (this.checkGameOver()) break;
+        
+        const cpuResult = await this.processCPUMove();
+        this.displayBoards();
       }
+      
+      const winner = this.cpuNumShips === 0 ? 'player' : 'cpu';
+      this.endGame(winner);
     } catch (error) {
       console.error('Game error:', error);
-      this.endGame('error');
+      this.quit();
     }
   }
 }
