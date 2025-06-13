@@ -1,10 +1,8 @@
 const {
-  GameState,
-  InitializationState,
+  SetupState,
   PlayerTurnState,
   CPUTurnState,
-  GameOverState,
-  GameStateMachine
+  GameOverState
 } = require('../src/states/GameStates');
 
 jest.mock('../src/config/GameConfig', () => {
@@ -17,263 +15,185 @@ jest.mock('../src/config/GameConfig', () => {
 });
 
 describe('Game States', () => {
-  describe('GameState Base Class', () => {
-    test('should throw error when handle is not implemented', () => {
-      const state = new GameState();
-      expect(() => state.handle()).toThrow('State must implement handle method');
-    });
+  let mockGame;
+  let consoleSpy;
 
-    test('should have a name property', () => {
-      const state = new GameState();
-      expect(state.name).toBe('BaseState');
-    });
+  beforeEach(() => {
+    consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    mockGame = {
+      playerBoard: { reset: jest.fn() },
+      cpuBoard: { reset: jest.fn() },
+      displayBoards: jest.fn(),
+      requestPlayerInput: jest.fn().mockResolvedValue('22'),
+      processPlayerMove: jest.fn().mockResolvedValue({ success: true, hit: false }),
+      processCPUMove: jest.fn().mockResolvedValue({ success: true, hit: false, coordinate: '33' }),
+      setState: jest.fn(),
+      endGame: jest.fn(),
+      playerNumShips: 3,
+      cpuNumShips: 3,
+      currentState: null,
+      getGameStatus: jest.fn().mockReturnValue({
+        totalTurns: 10,
+        playerMoves: 6,
+        cpuMoves: 4
+      })
+    };
   });
 
-  describe('InitializationState', () => {
+  afterEach(() => {
+    consoleSpy.mockRestore();
+    jest.clearAllMocks();
+  });
+
+  describe('SetupState', () => {
     let state;
-    let mockGame;
 
     beforeEach(() => {
-      state = new InitializationState();
-      mockGame = {
-        playerBoard: { reset: jest.fn() },
-        cpuBoard: { reset: jest.fn() },
-        initializeGame: jest.fn(),
-        setState: jest.fn()
-      };
+      state = new SetupState(mockGame);
     });
 
-    test('should have correct name', () => {
-      expect(state.name).toBe('Initialization');
+    test('should enter setup state with welcome message', async () => {
+      await state.enter();
+      expect(consoleSpy).toHaveBeenCalledWith("\nLet's play Sea Battle!");
+      expect(consoleSpy).toHaveBeenCalledWith('Try to sink the 3 enemy ships.');
     });
 
-    test('should handle initialization properly', () => {
-      const result = state.handle(mockGame);
-      
-      expect(mockGame.playerBoard.reset).toHaveBeenCalled();
-      expect(mockGame.cpuBoard.reset).toHaveBeenCalled();
-      expect(mockGame.initializeGame).toHaveBeenCalled();
+    test('should transition to player turn state', async () => {
+      await state.handle();
       expect(mockGame.setState).toHaveBeenCalledWith(expect.any(PlayerTurnState));
-      expect(result).toEqual({ continue: true });
     });
   });
 
   describe('PlayerTurnState', () => {
     let state;
-    let mockGame;
 
     beforeEach(() => {
-      state = new PlayerTurnState();
-      mockGame = {
-        processPlayerMove: jest.fn().mockReturnValue({ continue: true }),
-        setState: jest.fn(),
-        cpuNumShips: 1
-      };
+      state = new PlayerTurnState(mockGame);
+      mockGame.processPlayerMove.mockReset();
+      mockGame.requestPlayerInput.mockReset();
     });
 
-    test('should have correct name', () => {
-      expect(state.name).toBe('PlayerTurn');
+    test('should display boards and get player input', async () => {
+      mockGame.requestPlayerInput.mockResolvedValueOnce('22');
+      mockGame.processPlayerMove.mockResolvedValueOnce({ success: true, hit: false });
+      await state.enter();
+      expect(mockGame.displayBoards).toHaveBeenCalled();
+      await state.handle();
+      expect(mockGame.requestPlayerInput).toHaveBeenCalled();
     });
 
-    test('should handle player turn and continue to CPU turn', () => {
-      const result = state.handle(mockGame, '34');
-      
-      expect(mockGame.processPlayerMove).toHaveBeenCalledWith('34');
+    test('should process valid player move', async () => {
+      mockGame.requestPlayerInput.mockResolvedValueOnce('22');
+      mockGame.processPlayerMove.mockResolvedValueOnce({ success: true, hit: false });
+      await state.handle();
+      expect(mockGame.processPlayerMove).toHaveBeenCalledWith('22');
       expect(mockGame.setState).toHaveBeenCalledWith(expect.any(CPUTurnState));
-      expect(result.continue).toBe(true);
     });
 
-    test('should handle player win condition', () => {
+    test('should handle invalid move and retry', async () => {
+      mockGame.requestPlayerInput
+        .mockResolvedValueOnce('22')
+        .mockResolvedValueOnce('33');
+      mockGame.processPlayerMove
+        .mockResolvedValueOnce({ success: false, error: 'Invalid move' })
+        .mockResolvedValueOnce({ success: true, hit: false });
+      
+      await state.handle();
+      await state.handle();
+      expect(mockGame.processPlayerMove).toHaveBeenCalledTimes(2);
+    });
+
+    test('should handle player win condition', async () => {
+      mockGame.requestPlayerInput.mockResolvedValueOnce('22');
       mockGame.cpuNumShips = 0;
-      mockGame.processPlayerMove.mockReturnValue({ continue: false, hit: true });
+      mockGame.processPlayerMove.mockResolvedValueOnce({ success: true, hit: true, sunk: true });
       
-      const result = state.handle(mockGame, '34');
-      
+      await state.handle();
       expect(mockGame.setState).toHaveBeenCalledWith(expect.any(GameOverState));
-      expect(result.continue).toBe(false);
-      expect(result.winner).toBe('player');
     });
 
-    test('should handle player miss', () => {
-      mockGame.processPlayerMove.mockReturnValue({ continue: true, hit: false });
-      
-      const result = state.handle(mockGame, '00');
-      
-      expect(mockGame.setState).toHaveBeenCalledWith(expect.any(CPUTurnState));
-      expect(result.continue).toBe(true);
+    test('should display hit/miss messages', async () => {
+      mockGame.requestPlayerInput.mockResolvedValueOnce('22');
+      mockGame.processPlayerMove.mockResolvedValueOnce({ success: true, hit: true });
+      await state.handle();
+      expect(consoleSpy).toHaveBeenCalledWith('PLAYER HIT!');
+
+      mockGame.requestPlayerInput.mockResolvedValueOnce('33');
+      mockGame.processPlayerMove.mockResolvedValueOnce({ success: true, hit: false });
+      await state.handle();
+      expect(consoleSpy).toHaveBeenCalledWith('PLAYER MISS.');
     });
   });
 
   describe('CPUTurnState', () => {
     let state;
-    let mockGame;
 
     beforeEach(() => {
-      state = new CPUTurnState();
-      mockGame = {
-        processCPUMove: jest.fn().mockReturnValue({ continue: true }),
-        setState: jest.fn(),
-        playerNumShips: 1
-      };
+      state = new CPUTurnState(mockGame);
     });
 
-    test('should have correct name', () => {
-      expect(state.name).toBe('CPUTurn');
-    });
-
-    test('should handle CPU turn and continue to player turn', () => {
-      const result = state.handle(mockGame);
-      
+    test('should process CPU move', async () => {
+      await state.handle();
       expect(mockGame.processCPUMove).toHaveBeenCalled();
       expect(mockGame.setState).toHaveBeenCalledWith(expect.any(PlayerTurnState));
-      expect(result.continue).toBe(true);
     });
 
-    test('should handle CPU win condition', () => {
+    test('should handle CPU win condition', async () => {
       mockGame.playerNumShips = 0;
-      mockGame.processCPUMove.mockReturnValue({ continue: false, hit: true });
+      mockGame.processCPUMove.mockResolvedValue({ success: true, hit: true, sunk: true });
       
-      const result = state.handle(mockGame);
-      
+      await state.handle();
       expect(mockGame.setState).toHaveBeenCalledWith(expect.any(GameOverState));
-      expect(result.continue).toBe(false);
-      expect(result.winner).toBe('cpu');
     });
 
-    test('should handle CPU miss', () => {
-      mockGame.processCPUMove.mockReturnValue({ continue: true, hit: false });
-      
-      const result = state.handle(mockGame);
-      
-      expect(mockGame.setState).toHaveBeenCalledWith(expect.any(PlayerTurnState));
-      expect(result.continue).toBe(true);
+    test('should display hit/miss messages', async () => {
+      mockGame.processCPUMove.mockResolvedValueOnce({ 
+        success: true, 
+        hit: true, 
+        coordinate: '22' 
+      });
+      await state.handle();
+      expect(consoleSpy).toHaveBeenCalledWith('CPU HIT at 22!');
+
+      mockGame.processCPUMove.mockResolvedValueOnce({ 
+        success: true, 
+        hit: false, 
+        coordinate: '33' 
+      });
+      await state.handle();
+      expect(consoleSpy).toHaveBeenCalledWith('CPU MISS at 33.');
     });
   });
 
   describe('GameOverState', () => {
-    test('should have correct name and handle player win', () => {
-      const state = new GameOverState('player');
-      const mockGame = {};
-      
-      expect(state.name).toBe('GameOver');
-      expect(state.winner).toBe('player');
-      
-      const result = state.handle(mockGame);
-      expect(result.continue).toBe(false);
-      expect(result.winner).toBe('player');
-      expect(result.message).toBe('Congratulations! You won!');
+    test('should handle player win', async () => {
+      const state = new GameOverState(mockGame, 'player');
+      await state.enter();
+      expect(mockGame.displayBoards).toHaveBeenCalled();
+      await state.handle();
+      expect(consoleSpy).toHaveBeenCalledWith('\n*** CONGRATULATIONS! You sunk all enemy battleships! ***');
+      expect(mockGame.endGame).toHaveBeenCalledWith('player');
     });
 
-    test('should handle CPU win', () => {
-      const state = new GameOverState('cpu');
-      const mockGame = {};
-      
-      const result = state.handle(mockGame);
-      expect(result.continue).toBe(false);
-      expect(result.winner).toBe('cpu');
-      expect(result.message).toBe('CPU wins! Better luck next time.');
-    });
-  });
-
-  describe('GameStateMachine', () => {
-    let stateMachine;
-
-    beforeEach(() => {
-      stateMachine = new GameStateMachine();
+    test('should handle CPU win', async () => {
+      const state = new GameOverState(mockGame, 'cpu');
+      await state.enter();
+      expect(mockGame.displayBoards).toHaveBeenCalled();
+      await state.handle();
+      expect(consoleSpy).toHaveBeenCalledWith('\n*** GAME OVER! The CPU sunk all your battleships! ***');
+      expect(mockGame.endGame).toHaveBeenCalledWith('cpu');
     });
 
-    test('should start in initialization state', () => {
-      expect(stateMachine.currentState).toBeInstanceOf(InitializationState);
-    });
-
-    test('should change state correctly', () => {
-      const newState = new PlayerTurnState();
-      stateMachine.setState(newState);
+    test('should display game statistics', async () => {
+      const state = new GameOverState(mockGame, 'player');
+      await state.enter();
+      expect(mockGame.displayBoards).toHaveBeenCalled();
+      await state.handle();
       
-      expect(stateMachine.currentState).toBe(newState);
-    });
-
-    test('should handle state transitions', () => {
-      // Create a mock function that explicitly expects 2 parameters
-      const mockHandleFunction = function(context, input) { return { result: 'test' }; };
-      const mockState = {
-        handle: jest.fn(mockHandleFunction)
-      };
-      
-      stateMachine.setState(mockState);
-      const result = stateMachine.handle({}, 'input');
-      
-      expect(mockState.handle).toHaveBeenCalledWith({}, 'input');
-      expect(result.result).toBe('test');
-    });
-
-    test('should get current state name', () => {
-      expect(stateMachine.getStateName()).toBe('Initialization');
-      
-      stateMachine.setState(new PlayerTurnState());
-      expect(stateMachine.getStateName()).toBe('PlayerTurn');
-      
-      stateMachine.setState(new CPUTurnState());
-      expect(stateMachine.getStateName()).toBe('CPUTurn');
-      
-      stateMachine.setState(new GameOverState('player'));
-      expect(stateMachine.getStateName()).toBe('GameOver');
-    });
-  });
-
-  describe('State Flow Integration', () => {
-    test('should transition from initialization through game flow', () => {
-      const stateMachine = new GameStateMachine();
-      const mockGame = {
-        playerBoard: { reset: jest.fn() },
-        cpuBoard: { reset: jest.fn() },
-        initializeGame: jest.fn(),
-        setState: jest.fn(),
-        processPlayerMove: jest.fn().mockReturnValue({ continue: true, hit: false }),
-        processCPUMove: jest.fn().mockReturnValue({ continue: true, hit: false }),
-        cpuNumShips: 1,
-        playerNumShips: 1
-      };
-
-      // Capture setState calls to update state machine
-      mockGame.setState.mockImplementation((newState) => {
-        stateMachine.setState(newState);
-      });
-
-      // Start with initialization
-      expect(stateMachine.getStateName()).toBe('Initialization');
-      
-      // Initialize game
-      stateMachine.handle(mockGame);
-      expect(stateMachine.getStateName()).toBe('PlayerTurn');
-      
-      // Player turn
-      stateMachine.handle(mockGame, '34');
-      expect(stateMachine.getStateName()).toBe('CPUTurn');
-      
-      // CPU turn
-      stateMachine.handle(mockGame);
-      expect(stateMachine.getStateName()).toBe('PlayerTurn');
-    });
-
-    test('should handle win conditions correctly', () => {
-      const stateMachine = new GameStateMachine();
-      const mockGame = {
-        processPlayerMove: jest.fn().mockReturnValue({ continue: false, hit: true }),
-        setState: jest.fn(),
-        cpuNumShips: 0, // Player wins
-        playerNumShips: 1
-      };
-
-      mockGame.setState.mockImplementation((newState) => {
-        stateMachine.setState(newState);
-      });
-
-      stateMachine.setState(new PlayerTurnState());
-      const result = stateMachine.handle(mockGame, '99');
-      
-      expect(stateMachine.getStateName()).toBe('GameOver');
-      expect(result.winner).toBe('player');
+      expect(consoleSpy).toHaveBeenCalledWith('\nGame Statistics:');
+      expect(consoleSpy).toHaveBeenCalledWith('Total Turns: 10');
+      expect(consoleSpy).toHaveBeenCalledWith('Player Moves: 6');
+      expect(consoleSpy).toHaveBeenCalledWith('CPU Moves: 4');
     });
   });
 }); 

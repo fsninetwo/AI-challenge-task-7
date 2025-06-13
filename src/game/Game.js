@@ -112,12 +112,16 @@ class Game extends EventEmitter {
       return { success: false, error: 'You already guessed that location!' };
     }
 
+    const { row, col } = this.cpuBoard.parseCoordinate(input);
+    if (row === null || col === null) {
+      return { success: false, error: 'Invalid coordinate format' };
+    }
+
     this.playerGuesses.add(input);
     const ship = this.cpuBoard.getShipAt(input);
     
     if (ship) {
       ship.hit(input);
-      const { row, col } = this.cpuBoard.parseCoordinate(input);
       this.cpuBoard.markHit(row, col);
       const wasSunk = ship.isSunk();
       if (wasSunk) {
@@ -127,7 +131,6 @@ class Game extends EventEmitter {
       this.notify('playerHit', { coordinate: input });
       return { success: true, hit: true, sunk: wasSunk };
     } else {
-      const { row, col } = this.cpuBoard.parseCoordinate(input);
       this.cpuBoard.markMiss(row, col);
       this.notify('playerMiss', { coordinate: input });
       return { success: true, hit: false, sunk: false };
