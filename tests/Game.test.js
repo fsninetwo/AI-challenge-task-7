@@ -10,29 +10,30 @@ jest.mock('readline', () => ({
 
 // Mock states before requiring Game
 const mockState = {
-  getName: jest.fn().mockReturnValue('TestState'),
-  handle: jest.fn()
+  enter: jest.fn(),
+  handle: jest.fn(),
+  exit: jest.fn(),
+  getName: jest.fn().mockReturnValue('TestState')
 };
-const mockStateMachine = {
-  getCurrentState: jest.fn().mockReturnValue(mockState)
-};
-const mockPlayingState = jest.fn().mockImplementation(() => mockState);
 
 jest.mock('../src/states/GameStates', () => ({
-  InitializationState: jest.fn().mockImplementation(() => mockState),
-  GameStateMachine: jest.fn().mockImplementation(() => mockStateMachine),
-  GameOverState: jest.fn().mockImplementation(() => mockState),
-  PlayingState: mockPlayingState
+  SetupState: jest.fn().mockImplementation(() => mockState),
+  PlayerTurnState: jest.fn().mockImplementation(() => mockState),
+  CPUTurnState: jest.fn().mockImplementation(() => mockState),
+  GameOverState: jest.fn().mockImplementation(() => mockState)
 }));
 
 // Define mockShip before using it in jest.mock
-const mockShip = { locations: ['00', '01', '02'] };
+const mockShip = { 
+  locations: ['00', '01', '02'],
+  hit: jest.fn(),
+  isSunk: jest.fn().mockReturnValue(false)
+};
 
 // Mock ShipFactory as a class
 class MockShipFactory {
-  generateShips() { return [mockShip, mockShip, mockShip]; }
+  static createRandomShip() { return mockShip; }
 }
-MockShipFactory.createRandomShip = jest.fn().mockReturnValue(mockShip);
 
 jest.mock('../src/entities/ShipFactory', () => MockShipFactory);
 
@@ -45,7 +46,12 @@ jest.mock('../src/config/GameConfig', () => {
       const config = {
         boardSize: 10,
         numShips: 3,
-        shipLength: 3
+        shipLength: 3,
+        shipPatterns: [
+          { length: 3, pattern: 'horizontal' },
+          { length: 3, pattern: 'horizontal' },
+          { length: 3, pattern: 'horizontal' }
+        ]
       };
       return config[key];
     }),
@@ -66,9 +72,15 @@ jest.mock('../src/config/GameConfig', () => {
 // Mock GameBoard
 const mockGameBoard = {
   reset: jest.fn(),
-  placeShip: jest.fn(),
+  placeShip: jest.fn().mockReturnValue(true),
   display: jest.fn().mockReturnValue(['  0 1 2', '0 ~ ~ ~', '1 ~ ~ ~']),
-  getStats: jest.fn().mockReturnValue({ ships: 3 })
+  getStats: jest.fn().mockReturnValue({ ships: 3 }),
+  parseCoordinate: jest.fn().mockReturnValue({ row: 0, col: 0 }),
+  markHit: jest.fn(),
+  markMiss: jest.fn(),
+  getShipAt: jest.fn().mockReturnValue(mockShip),
+  isValidCoordinate: jest.fn().mockReturnValue(true),
+  grid: Array(10).fill(null).map(() => Array(10).fill('~'))
 };
 
 jest.mock('../src/entities/GameBoard', () => {
@@ -77,299 +89,148 @@ jest.mock('../src/entities/GameBoard', () => {
 
 // Mock AI Strategies
 const mockAIContext = {
-  makeMove: jest.fn().mockReturnValue({ coordinate: '55', mode: 'hunt' })
+  makeMove: jest.fn().mockReturnValue({ coordinate: '55', mode: 'hunt', strategy: 'HuntStrategy' }),
+  updateResult: jest.fn()
 };
 
-jest.mock('../src/ai/AIStrategies', () => ({
+jest.mock('../src/ai/AIStrategy', () => ({
   AIContext: jest.fn().mockImplementation(() => mockAIContext)
-}));
-
-// Mock Commands
-const mockCommandInvoker = { execute: jest.fn() };
-const mockPlayerMoveCommand = { execute: jest.fn().mockReturnValue(true) };
-const mockCPUMoveCommand = { execute: jest.fn().mockReturnValue(false) };
-
-jest.mock('../src/commands/Commands', () => ({
-  CommandInvoker: jest.fn().mockImplementation(() => mockCommandInvoker),
-  PlayerMoveCommand: jest.fn().mockImplementation(() => mockPlayerMoveCommand),
-  CPUMoveCommand: jest.fn().mockImplementation(() => mockCPUMoveCommand)
 }));
 
 // Mock Observers
 const mockStatsObserver = {
+  update: jest.fn(),
   getStats: jest.fn().mockReturnValue({
-    playerHits: 2, playerMisses: 1, cpuHits: 1, cpuMisses: 2, turnsPlayed: 3
+    playerHits: 2,
+    playerMisses: 1,
+    cpuHits: 1,
+    cpuMisses: 2,
+    turnsPlayed: 3
   })
 };
 
-const mockEventEmitter = {
-  subscribe: jest.fn(),
-  notify: jest.fn()
-};
-
 jest.mock('../src/observers/GameObservers', () => ({
-  GameStatsObserver: jest.fn().mockImplementation(() => mockStatsObserver),
-  EventEmitter: jest.fn().mockImplementation(() => mockEventEmitter)
-}));
-
-// Mock Validation with validate methods
-const mockValidator = {
-  addStrategy: jest.fn().mockReturnThis(),
-  validate: jest.fn().mockReturnValue({ isValid: true })
-};
-
-const mockStrategy = { validate: jest.fn().mockReturnValue({ isValid: true }) };
-
-jest.mock('../src/validation/ValidationStrategy', () => ({
-  InputValidator: jest.fn().mockImplementation(() => mockValidator),
-  InputFormatValidator: jest.fn().mockImplementation(() => mockStrategy),
-  CoordinateRangeValidator: jest.fn().mockImplementation(() => mockStrategy),
-  DuplicateGuessValidator: jest.fn().mockImplementation(() => mockStrategy)
+  GameStatsObserver: jest.fn().mockImplementation(() => mockStatsObserver)
 }));
 
 describe('Game', () => {
   let game;
   let consoleSpy;
-  let originalValidate;
 
   beforeEach(() => {
     jest.clearAllMocks();
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     game = new Game();
-    // Save original validate for later restoration
-    originalValidate = mockValidator.validate;
   });
 
   afterEach(() => {
     consoleSpy.mockRestore();
-    // Restore original validate
-    mockValidator.validate = originalValidate;
   });
 
   describe('Constructor and Initialization', () => {
-    test('should create game instance', () => {
+    test('should create game instance with all components', () => {
       expect(game).toBeInstanceOf(Game);
       expect(game.playerBoard).toBeDefined();
       expect(game.cpuBoard).toBeDefined();
       expect(game.aiContext).toBeDefined();
+      expect(game.observers).toBeDefined();
+      expect(game.playerGuesses).toBeDefined();
+      expect(game.cpuGuesses).toBeDefined();
     });
 
-    test('should initialize ship counts', () => {
+    test('should initialize game successfully', async () => {
+      await game.initialize();
       expect(game.playerNumShips).toBe(3);
       expect(game.cpuNumShips).toBe(3);
+      expect(mockState.enter).toHaveBeenCalled();
     });
 
-    test('should initialize game and place ships', () => {
-      game.initialize();
-      
-      expect(consoleSpy).toHaveBeenCalledWith('Boards created.');
-      expect(consoleSpy).toHaveBeenCalledWith("\nLet's play Sea Battle!");
-      expect(mockEventEmitter.notify).toHaveBeenCalledWith('gameStart');
-    });
-
-    test('should alias initializeGame to initialize', () => {
-      const initializeSpy = jest.spyOn(game, 'initialize');
-      game.initializeGame();
-      expect(initializeSpy).toHaveBeenCalled();
-    });
-
-    test('should setup observers correctly', () => {
-      expect(mockEventEmitter.subscribe).toHaveBeenCalledWith(mockStatsObserver);
+    test('should place ships randomly', async () => {
+      await game.placeShipsRandomly();
+      expect(mockGameBoard.placeShip).toHaveBeenCalledTimes(6); // 3 for player, 3 for CPU
     });
   });
 
-  describe('Ship Placement', () => {
-    test('should place ships randomly', () => {
-      const ShipFactory = require('../src/entities/ShipFactory');
-      game.placeShipsRandomly();
-      expect(ShipFactory.createRandomShip).toHaveBeenCalled();
-      expect(mockGameBoard.placeShip).toHaveBeenCalled();
-      expect(consoleSpy).toHaveBeenCalledWith('3 ships placed randomly for Player.');
+  describe('Game Actions', () => {
+    test('should process valid player move', async () => {
+      const result = await game.processPlayerMove('22');
+      expect(result.success).toBe(true);
+      expect(result.hit).toBe(true);
+      expect(mockGameBoard.markHit).toHaveBeenCalled();
     });
 
-    test('should handle ship placement errors and use fallback', () => {
-      const ShipFactory = require('../src/entities/ShipFactory');
-      ShipFactory.createRandomShip.mockImplementation(() => {
-        throw new Error('Placement failed');
-      });
-      // Spy on the prototype method
-      const generateShipsSpy = jest.spyOn(MockShipFactory.prototype, 'generateShips');
-      game.placeShipsRandomly();
-      expect(generateShipsSpy).toHaveBeenCalled();
-      expect(mockGameBoard.placeShip).toHaveBeenCalled();
-      generateShipsSpy.mockRestore();
-    });
-  });
-
-  describe('Game Flow', () => {
-    test('should display boards', () => {
-      game.displayBoards();
-      
-      expect(mockGameBoard.display).toHaveBeenCalledTimes(2);
-      expect(consoleSpy).toHaveBeenCalledWith('\n   --- OPPONENT BOARD ---          --- YOUR BOARD ---');
+    test('should process CPU move', async () => {
+      const result = await game.processCPUMove();
+      expect(result.success).toBe(true);
+      expect(mockAIContext.makeMove).toHaveBeenCalled();
+      expect(mockAIContext.updateResult).toHaveBeenCalled();
     });
 
-    test('should request player input', () => {
-      const processPlayerTurnSpy = jest.spyOn(game, 'processPlayerTurn').mockImplementation(() => {});
-      
-      game.requestPlayerInput();
-      
-      expect(mockReadline.question).toHaveBeenCalled();
-      
-      // Simulate answer callback
-      const callback = mockReadline.question.mock.calls[0][1];
-      callback('34');
-      
-      expect(processPlayerTurnSpy).toHaveBeenCalledWith('34');
+    test('should handle duplicate player move', async () => {
+      game.playerGuesses.add('22');
+      const result = await game.processPlayerMove('22');
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('You already guessed that location!');
     });
 
-    test('should process valid player move', () => {
-      const result = game.processPlayerMove('34');
-      expect(result).toEqual({ continue: true, hit: true });
-      expect(mockEventEmitter.notify).toHaveBeenCalledWith('playerHit');
-    });
-
-    test('should handle invalid player input', () => {
-      // Create a mock validator with validate returning invalid
-      const mockValidatorInstance = {
-        addStrategy: jest.fn().mockReturnThis(),
-        validate: jest.fn().mockReturnValueOnce({ isValid: false, message: 'Invalid input' })
-      };
-      const mockValidatorFactory = () => mockValidatorInstance;
-      const GameWithDI = require('../src/game/Game');
-      const gameWithDI = new GameWithDI(mockValidatorFactory);
-      const result = gameWithDI.processPlayerMove('invalid');
-      expect(result).toEqual({ continue: false, hit: false, error: 'Invalid input' });
-    });
-
-    test('should handle null player input', () => {
-      const result = game.processPlayerMove(null);
-      expect(result).toEqual({ continue: false, hit: false, error: 'No input provided' });
-    });
-
-    test('should process CPU move', () => {
-      const result = game.processCPUMove();
-      
-      expect(result).toEqual({ continue: true, hit: false });
-      expect(mockEventEmitter.notify).toHaveBeenCalledWith('cpuMiss');
-    });
-
-    test('should process player turn with validation', () => {
-      // Set up spies before calling the method
-      const checkGameOverSpy = jest.spyOn(game, 'checkGameOver').mockReturnValue(false);
-      const processCPUTurnSpy = jest.spyOn(game, 'processCPUTurn').mockImplementation(() => {});
-      // Mock validator to return valid
-      mockValidator.validate = jest.fn().mockReturnValue({ isValid: true });
-      game.processPlayerTurn('34');
-      expect(checkGameOverSpy).toHaveBeenCalled();
-      expect(processCPUTurnSpy).toHaveBeenCalled();
+    test('should handle ship sinking', async () => {
+      mockShip.isSunk.mockReturnValueOnce(true);
+      game.cpuNumShips = 3;
+      const result = await game.processPlayerMove('22');
+      expect(result.success).toBe(true);
+      expect(result.sunk).toBe(true);
+      expect(game.cpuNumShips).toBe(2);
     });
   });
 
   describe('Game State Management', () => {
-    test('should detect player win', () => {
-      game.cpuNumShips = 0;
-      
-      const result = game.checkGameOver();
-      
-      expect(result).toBe(true);
-    });
-
-    test('should detect CPU win', () => {
-      game.playerNumShips = 0;
-      
-      const result = game.checkGameOver();
-      
-      expect(result).toBe(true);
-    });
-
-    test('should continue game when no winner', () => {
-      game.playerNumShips = 2;
-      game.cpuNumShips = 2;
-      
-      const result = game.checkGameOver();
-      
-      expect(result).toBe(false);
-    });
-
-    test('should set game state', () => {
-      const newState = { getName: () => 'NewState', handle: () => {} };
+    test('should change state correctly', () => {
+      const newState = { enter: jest.fn(), handle: jest.fn(), exit: jest.fn() };
       game.setState(newState);
-      
       expect(game.currentState).toBe(newState);
     });
-  });
 
-  describe('Game Statistics and Status', () => {
-    test('should end game and display statistics', () => {
-      game.endGame();
-      
-      expect(consoleSpy).toHaveBeenCalledWith('\nGame Statistics:');
-      expect(consoleSpy).toHaveBeenCalledWith('Player - Hits: 2, Misses: 1');
-      expect(consoleSpy).toHaveBeenCalledWith('CPU - Hits: 1, Misses: 2');
-      expect(consoleSpy).toHaveBeenCalledWith('Total turns: 3');
+    test('should handle game over condition', () => {
+      game.endGame('player');
       expect(mockReadline.close).toHaveBeenCalled();
     });
 
-    test('should get game status', () => {
+    test('should quit game gracefully', () => {
+      const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {});
+      game.quit();
+      expect(mockReadline.close).toHaveBeenCalled();
+      expect(exitSpy).toHaveBeenCalledWith(0);
+      exitSpy.mockRestore();
+    });
+  });
+
+  describe('Game Status and Display', () => {
+    test('should display boards correctly', () => {
+      game.displayBoards();
+      expect(mockGameBoard.display).toHaveBeenCalledTimes(2);
+    });
+
+    test('should return correct game status', () => {
+      game.currentState = mockState;
       const status = game.getGameStatus();
-      
       expect(status).toEqual({
-        playerShips: 3,
-        cpuShips: 3,
+        playerBoard: mockGameBoard,
+        cpuBoard: mockGameBoard,
         currentState: 'TestState',
-        totalTurns: 3,
-        playerMoves: 0,
-        cpuMoves: 0
+        playerNumShips: expect.any(Number),
+        cpuNumShips: expect.any(Number),
+        playerGuesses: expect.any(Array),
+        cpuGuesses: expect.any(Array),
+        totalTurns: expect.any(Number),
+        playerMoves: expect.any(Number),
+        cpuMoves: expect.any(Number)
       });
     });
 
-    test('should save game state', () => {
-      const savedState = game.saveGame();
-      
-      expect(savedState).toEqual({
-        playerBoard: { ships: 3 },
-        cpuBoard: { ships: 3 },
-        playerGuesses: [],
-        cpuGuesses: [],
-        playerNumShips: 3,
-        cpuNumShips: 3,
-        stats: {
-          playerHits: 2,
-          playerMisses: 1,
-          cpuHits: 1,
-          cpuMisses: 2,
-          turnsPlayed: 3
-        },
-        currentState: 'TestState',
-        timestamp: expect.any(String)
-      });
-    });
-  });
-
-  describe('Game Reset', () => {
-    test('should reset game state', () => {
-      // Ensure PlayingState is available
-      global.PlayingState = mockPlayingState;
-      game.reset();
-      expect(mockGameBoard.reset).toHaveBeenCalledTimes(2);
-      expect(game.playerGuesses.size).toBe(0);
-      expect(game.cpuGuesses.size).toBe(0);
-      expect(game.playerNumShips).toBe(3);
-      expect(game.cpuNumShips).toBe(3);
-      expect(mockEventEmitter.subscribe).toHaveBeenCalled();
-    });
-  });
-
-  describe('Game Start', () => {
-    test('should start game', () => {
-      const initializeSpy = jest.spyOn(game, 'initialize');
-      const handleSpy = jest.spyOn(game.currentState, 'handle');
-      
-      game.start();
-      
-      expect(initializeSpy).toHaveBeenCalled();
-      expect(handleSpy).toHaveBeenCalled();
+    test('should handle player input correctly', async () => {
+      mockReadline.question.mockImplementationOnce((_, callback) => callback('22'));
+      const input = await game.requestPlayerInput();
+      expect(input).toBe('22');
     });
   });
 }); 

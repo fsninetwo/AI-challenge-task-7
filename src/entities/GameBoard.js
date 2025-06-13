@@ -105,12 +105,13 @@ class GameBoard {
    * @param {number} col - Column coordinate
    */
   markMiss(row, col) {
-    if (this.isValidCoordinate(row, col)) {
-      const config = new GameConfig();
-      this.grid[row][col] = config.get('symbols').miss;
-      this.misses.add(`${row}${col}`);
-      this.missCount++;
+    if (!this.isValidCoordinate(row, col)) {
+      return;
     }
+    const config = new GameConfig();
+    this.grid[row][col] = config.get('symbols').miss;
+    this.misses.add(`${row}${col}`);
+    this.missCount++;
   }
 
   /**

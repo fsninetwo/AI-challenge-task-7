@@ -67,6 +67,7 @@ class Game extends EventEmitter {
       
       await this.placeShipsRandomly();
       this.setState(new SetupState(this));
+      await this.currentState.enter();
       this.notify('gameStart');
       
       return { success: true };
@@ -83,16 +84,42 @@ class Game extends EventEmitter {
       
       // Place ships on player board
       for (const pattern of patterns) {
-        const playerShip = ShipFactory.createRandomShip(this.playerBoard, pattern.length);
-        const placed = this.playerBoard.placeShip(playerShip, true);
-        if (placed) this.playerNumShips++;
+        let playerShip;
+        let placed = false;
+        let attempts = 0;
+        const maxAttempts = 100;
+
+        while (!placed && attempts < maxAttempts) {
+          playerShip = ShipFactory.createRandomShip(this.playerBoard, pattern.length);
+          placed = this.playerBoard.placeShip(playerShip, true);
+          attempts++;
+        }
+
+        if (placed) {
+          this.playerNumShips++;
+        } else {
+          throw new Error('Failed to place player ship after maximum attempts');
+        }
       }
       
       // Place ships on CPU board
       for (const pattern of patterns) {
-        const cpuShip = ShipFactory.createRandomShip(this.cpuBoard, pattern.length);
-        const placed = this.cpuBoard.placeShip(cpuShip, false);
-        if (placed) this.cpuNumShips++;
+        let cpuShip;
+        let placed = false;
+        let attempts = 0;
+        const maxAttempts = 100;
+
+        while (!placed && attempts < maxAttempts) {
+          cpuShip = ShipFactory.createRandomShip(this.cpuBoard, pattern.length);
+          placed = this.cpuBoard.placeShip(cpuShip, false);
+          attempts++;
+        }
+
+        if (placed) {
+          this.cpuNumShips++;
+        } else {
+          throw new Error('Failed to place CPU ship after maximum attempts');
+        }
       }
       
       return { success: true };
@@ -111,24 +138,28 @@ class Game extends EventEmitter {
       return { success: false, error: 'You already guessed that location!' };
     }
 
+    const { row, col } = this.cpuBoard.parseCoordinate(input);
+    if (row === null || col === null) {
+      return { success: false, error: 'Invalid coordinate format' };
+    }
+
     this.playerGuesses.add(input);
     const ship = this.cpuBoard.getShipAt(input);
     
     if (ship) {
       ship.hit(input);
-      const { row, col } = this.cpuBoard.parseCoordinate(input);
       this.cpuBoard.markHit(row, col);
-      if (ship.isSunk()) {
+      const wasSunk = ship.isSunk();
+      if (wasSunk) {
         this.cpuNumShips--;
         this.notify('shipSunk', { player: 'player' });
       }
       this.notify('playerHit', { coordinate: input });
-      return { success: true, hit: true, sunk: ship.isSunk() };
+      return { success: true, hit: true, sunk: wasSunk };
     } else {
-      const { row, col } = this.cpuBoard.parseCoordinate(input);
       this.cpuBoard.markMiss(row, col);
       this.notify('playerMiss', { coordinate: input });
-      return { success: true, hit: false };
+      return { success: true, hit: false, sunk: false };
     }
   }
 
@@ -142,19 +173,20 @@ class Game extends EventEmitter {
       ship.hit(coordinate);
       const { row, col } = this.playerBoard.parseCoordinate(coordinate);
       this.playerBoard.markHit(row, col);
-      if (ship.isSunk()) {
+      const wasSunk = ship.isSunk();
+      if (wasSunk) {
         this.playerNumShips--;
         this.notify('shipSunk', { player: 'cpu' });
       }
       this.notify('cpuHit', { coordinate });
       this.aiContext.updateResult(true, coordinate);
-      return { success: true, hit: true, sunk: ship.isSunk(), coordinate };
+      return { success: true, hit: true, sunk: wasSunk, coordinate };
     } else {
       const { row, col } = this.playerBoard.parseCoordinate(coordinate);
       this.playerBoard.markMiss(row, col);
       this.notify('cpuMiss', { coordinate });
       this.aiContext.updateResult(false, coordinate);
-      return { success: true, hit: false, coordinate };
+      return { success: true, hit: false, sunk: false, coordinate };
     }
   }
 
@@ -163,9 +195,6 @@ class Game extends EventEmitter {
       this.currentState.exit();
     }
     this.currentState = state;
-    if (state) {
-      state.enter();
-    }
   }
 
   displayBoards() {
@@ -201,19 +230,20 @@ class Game extends EventEmitter {
       cpuNumShips: this.cpuNumShips,
       playerGuesses: Array.from(this.playerGuesses),
       cpuGuesses: Array.from(this.cpuGuesses),
-      totalTurns: this.statsObserver.getStats().turnsPlayed,
+      totalTurns: this.playerGuesses.size + this.cpuGuesses.size,
       playerMoves: this.playerGuesses.size,
       cpuMoves: this.cpuGuesses.size
     };
   }
 
   reset() {
-    this.playerBoard = new GameBoard();
-    this.cpuBoard = new GameBoard();
+    this.playerBoard.reset();
+    this.cpuBoard.reset();
     this.playerGuesses.clear();
     this.cpuGuesses.clear();
     this.playerNumShips = 0;
     this.cpuNumShips = 0;
+    this.aiContext.reset();
     this.currentState = null;
   }
 
@@ -224,15 +254,40 @@ class Game extends EventEmitter {
   }
 
   async start() {
+    console.log('==================================================');
+    console.log('      🚢 Sea Battle Game v2.0 🚢');
+    console.log('   Modularized with Design Patterns');
+    console.log('==================================================\n');
+    
     try {
       await this.initialize();
-      this.setState(new PlayerTurnState(this));
-      if (this.currentState) {
-        await this.currentState.handle();
+      console.log('\nLet\'s play Sea Battle!');
+      console.log('Try to sink the 3 enemy ships.');
+      this.displayBoards();
+      
+      while (!this.checkGameOver()) {
+        const input = await this.requestPlayerInput();
+        if (!input) continue;
+        
+        const result = await this.processPlayerMove(input);
+        if (!result.success) {
+          console.log(result.error);
+          continue;
+        }
+        
+        this.displayBoards();
+        
+        if (this.checkGameOver()) break;
+        
+        const cpuResult = await this.processCPUMove();
+        this.displayBoards();
       }
+      
+      const winner = this.cpuNumShips === 0 ? 'player' : 'cpu';
+      this.endGame(winner);
     } catch (error) {
-      console.error('Game error:', error.message);
-      throw error;
+      console.error('Game error:', error);
+      this.quit();
     }
   }
 }

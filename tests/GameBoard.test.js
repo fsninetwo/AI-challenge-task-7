@@ -83,9 +83,9 @@ describe('GameBoard', () => {
   });
 
   test('should parse coordinates correctly', () => {
-    expect(board.parseCoordinate('05')).toEqual([0, 5]);
-    expect(board.parseCoordinate('34')).toEqual([3, 4]);
-    expect(board.parseCoordinate('99')).toEqual([9, 9]);
+    expect(board.parseCoordinate('05')).toEqual({ row: 0, col: 5 });
+    expect(board.parseCoordinate('34')).toEqual({ row: 3, col: 4 });
+    expect(board.parseCoordinate('99')).toEqual({ row: 9, col: 9 });
   });
 
   test('should display board correctly', () => {
