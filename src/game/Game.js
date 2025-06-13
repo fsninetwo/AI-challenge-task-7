@@ -580,9 +580,8 @@ class CPUMoveCommand extends Command {
 // ============================================================================
 // GAME ORCHESTRATION LAYER
 // ============================================================================
-class Game extends EventEmitter {
+class Game {
   constructor() {
-    super();
     this.config = new GameConfig();
     this.eventEmitter = new EventEmitter();
     this.statsObserver = new GameStatsObserver();
@@ -605,8 +604,6 @@ class Game extends EventEmitter {
     });
     
     this.setupObservers();
-    this.isGameOver = false;
-    this.state = null;
   }
   
   /**
@@ -940,13 +937,6 @@ class Game extends EventEmitter {
     this.currentState = new PlayingState(this);
     
     this.setupObservers();
-  }
-
-  quit() {
-    this.isGameOver = true;
-    this.state = new GameOverState(this, 'quit');
-    this.notify('gameQuit', { timestamp: new Date() });
-    return true;
   }
 }
 

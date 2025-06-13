@@ -8,7 +8,6 @@
  */
 
 const GameConfig = require('../config/GameConfig');
-const Ship = require('../entities/Ship');
 
 /**
  * Abstract base class for game states
@@ -16,13 +15,11 @@ const Ship = require('../entities/Ship');
 class GameState {
   /**
    * Create a new game state
-   * @param {Game} game - Game object
+   * @param {Game} context - Game context
    */
-  constructor(game) {
-    if (!game) {
-      throw new Error('Game object is required');
-    }
-    this.game = game;
+  constructor(context) {
+    this.context = context;
+    this.name = 'BaseState';
   }
   
   /**
@@ -37,12 +34,8 @@ class GameState {
    * @returns {string} State name
    */
   getName() {
-    return this.constructor.name;
+    return this.name || this.constructor.name;
   }
-
-  enter() {}
-  exit() {}
-  handleInput() {}
 }
 
 /**
@@ -53,9 +46,8 @@ class PlayingState extends GameState {
    * Handle playing state - display boards and request input
    */
   handle() {
-    this.game.displayBoards();
-    this.game.requestPlayerInput();
-    return { continue: true };
+    this.context.displayBoards();
+    this.context.requestPlayerInput();
   }
 
   /**
@@ -63,11 +55,11 @@ class PlayingState extends GameState {
    * @returns {GameState|null} New state or null to stay in current state
    */
   checkTransition() {
-    if (this.game.cpuNumShips === 0) {
-      return new GameOverState(this.game, 'player');
+    if (this.context.cpuNumShips === 0) {
+      return new GameOverState(this.context, 'player');
     }
-    if (this.game.playerNumShips === 0) {
-      return new GameOverState(this.game, 'cpu');
+    if (this.context.playerNumShips === 0) {
+      return new GameOverState(this.context, 'cpu');
     }
     return null;
   }
@@ -79,21 +71,47 @@ class PlayingState extends GameState {
 class GameOverState extends GameState {
   /**
    * Create game over state
-   * @param {Game} game - Game object
-   * @param {string} winner - Winner ('player' or 'cpu')
+   * @param {Game|string} contextOrWinner - Game context or winner string
+   * @param {string} [winner] - Winner ('player' or 'cpu') if first param is context
    */
-  constructor(game, winner) {
-    super(game);
-    this.winner = winner;
+  constructor(contextOrWinner, winner) {
+    // Handle both constructor signatures
+    if (typeof contextOrWinner === 'string') {
+      // Called with just winner (for tests)
+      super(null);
+      this.winner = contextOrWinner;
+    } else {
+      // Called with context and winner (for normal usage)
+      super(contextOrWinner);
+      this.winner = winner;
+    }
+    this.name = 'GameOver';
+    this.endTime = new Date();
   }
   
   /**
    * Handle game over state - display winner and end game
    */
   handle() {
-    this.game.displayBoards();
-    this.game.endGame();
-    return { continue: false, winner: this.winner };
+    const config = new GameConfig();
+    let message;
+    
+    if (this.winner === 'player') {
+      message = config.getMessage('playerWin');
+      console.log(message);
+    } else {
+      message = config.getMessage('cpuWin');
+      console.log(message);
+    }
+    
+    if (this.context && this.context.displayBoards) {
+      this.context.displayBoards();
+    }
+    if (this.context && this.context.endGame) {
+      this.context.endGame();
+    }
+    
+    return { continue: false, winner: this.winner, message };
   }
 
   /**
@@ -103,26 +121,9 @@ class GameOverState extends GameState {
   getGameOverInfo() {
     return {
       winner: this.winner,
-      endTime: new Date(),
-      state: 'GameOver'
+      endTime: this.endTime,
+      state: this.getName()
     };
-  }
-
-  enter() {
-    this.game.notify('gameOver', { winner: this.winner });
-  }
-
-  handleInput(command) {
-    switch (command) {
-      case 'restart':
-        this.game.setState(new SetupState(this.game));
-        break;
-      case 'quit':
-        this.game.quit();
-        break;
-      default:
-        this.game.notify('error', { message: 'Invalid command in GameOver state' });
-    }
   }
 }
 
@@ -130,27 +131,46 @@ class GameOverState extends GameState {
  * State when game is initializing
  */
 class InitializationState extends GameState {
-  constructor(game) {
-    super(game);
+  constructor(context) {
+    super(context);
+    this.name = 'Initialization';
   }
   
   /**
    * Handle initialization - set up boards and ships
    */
-  handle() {
+  handle(context) {
     try {
-      if (this.game.playerBoard && this.game.playerBoard.reset) {
-        this.game.playerBoard.reset();
+      console.log('Initializing game...');
+      const gameContext = context || this.context;
+      
+      if (gameContext && gameContext.playerBoard && gameContext.playerBoard.reset) {
+        gameContext.playerBoard.reset();
       }
-      if (this.game.cpuBoard && this.game.cpuBoard.reset) {
-        this.game.cpuBoard.reset();
+      if (gameContext && gameContext.cpuBoard && gameContext.cpuBoard.reset) {
+        gameContext.cpuBoard.reset();
       }
       
-      this.game.initializeGame();
-      this.game.setState(new PlayerTurnState(this.game));
+      if (gameContext && gameContext.initializeGame) {
+        gameContext.initializeGame();
+      } else if (gameContext && gameContext.placeShipsRandomly) {
+        gameContext.placeShipsRandomly();
+      }
+      
+      console.log("\nLet's play Sea Battle!");
+      console.log(`Try to sink the ${gameContext ? gameContext.cpuNumShips || 3 : 3} enemy ships.`);
+      
+      // Transition to player turn state
+      if (gameContext && gameContext.setState) {
+        gameContext.setState(new PlayerTurnState(gameContext));
+      }
       return { continue: true };
     } catch (error) {
-      this.game.setState(new ErrorState(this.game, error));
+      console.error('Failed to initialize game:', error.message);
+      const gameContext = context || this.context;
+      if (gameContext && gameContext.setState) {
+        gameContext.setState(new ErrorState(gameContext, error));
+      }
       return { continue: false, error: error.message };
     }
   }
@@ -160,26 +180,38 @@ class InitializationState extends GameState {
  * State for player's turn
  */
 class PlayerTurnState extends GameState {
-  constructor(game) {
-    super(game);
+  constructor(context) {
+    super(context);
+    this.name = 'PlayerTurn';
   }
   
   /**
    * Handle player turn
    */
-  handle(input) {
-    try {
-      if (!input || input.trim() === '') {
-        return { continue: true, error: 'Invalid input' };
-      }
-      const result = this.game.processPlayerMove(input);
-      if (result.success) {
-        this.game.setState(new CPUTurnState(this.game));
-      }
-      return { continue: true };
-    } catch (error) {
-      return { continue: true, error: error.message };
+  handle(contextOrInput, input) {
+    // Handle both calling conventions
+    const gameContext = (contextOrInput && typeof contextOrInput === 'object' && contextOrInput.processPlayerMove) 
+      ? contextOrInput 
+      : this.context;
+    const playerInput = input || (typeof contextOrInput === 'string' ? contextOrInput : null);
+    
+    if (!gameContext || !gameContext.processPlayerMove) {
+      return { continue: false, error: 'No game context available' };
     }
+    
+    const result = gameContext.processPlayerMove(playerInput);
+    
+    if (result.hit && gameContext.cpuNumShips === 0) {
+      gameContext.setState(new GameOverState(gameContext, 'player'));
+      return { continue: false, winner: 'player' };
+    }
+    
+    if (result.continue) {
+      gameContext.setState(new CPUTurnState(gameContext));
+      return { continue: true, hit: result.hit };
+    }
+    
+    return { continue: true, hit: result.hit };
   }
 }
 
@@ -187,23 +219,34 @@ class PlayerTurnState extends GameState {
  * State for CPU's turn
  */
 class CPUTurnState extends GameState {
-  constructor(game) {
-    super(game);
+  constructor(context) {
+    super(context);
+    this.name = 'CPUTurn';
   }
   
   /**
    * Handle CPU turn
    */
-  handle() {
-    try {
-      const result = this.game.processCPUMove();
-      if (result.success) {
-        this.game.setState(new PlayerTurnState(this.game));
-      }
-      return { continue: true };
-    } catch (error) {
-      return { continue: true, error: error.message };
+  handle(context) {
+    const gameContext = context || this.context;
+    
+    if (!gameContext || !gameContext.processCPUMove) {
+      return { continue: false, error: 'No game context available' };
     }
+    
+    const result = gameContext.processCPUMove();
+    
+    if (result.hit && gameContext.playerNumShips === 0) {
+      gameContext.setState(new GameOverState(gameContext, 'cpu'));
+      return { continue: false, winner: 'cpu' };
+    }
+    
+    if (result.continue) {
+      gameContext.setState(new PlayerTurnState(gameContext));
+      return { continue: true, hit: result.hit };
+    }
+    
+    return { continue: true, hit: result.hit };
   }
 }
 
@@ -211,9 +254,12 @@ class CPUTurnState extends GameState {
  * State when game is paused (for future implementation)
  */
 class PausedState extends GameState {
-  constructor(game, previousState) {
-    super(game);
-    this.previousState = previousState;
+  /**
+   * Handle paused state
+   */
+  handle() {
+    console.log('Game is paused. Press any key to continue...');
+    // In a real implementation, this would wait for user input
   }
 
   /**
@@ -221,11 +267,7 @@ class PausedState extends GameState {
    * @returns {PlayingState} New playing state
    */
   resume() {
-    if (this.previousState) {
-      this.game.setState(this.previousState);
-      return true;
-    }
-    return false;
+    return new PlayingState(this.context);
   }
 }
 
@@ -235,23 +277,22 @@ class PausedState extends GameState {
 class ErrorState extends GameState {
   /**
    * Create error state
-   * @param {Game} game - Game object
+   * @param {Game} context - Game context
    * @param {Error} error - Error that occurred
    */
-  constructor(game, error) {
-    super(game);
+  constructor(context, error) {
+    super(context);
     this.error = error;
+    this.errorTime = new Date();
   }
 
   /**
    * Handle error state
    */
   handle() {
-    this.game.notify('error', {
-      message: this.error.message,
-      state: this.getName()
-    });
-    return { continue: false, error: this.error.message };
+    console.error('Game encountered an error:', this.error.message);
+    console.log('Game will exit.');
+    this.context.endGame();
   }
 
   /**
@@ -260,8 +301,9 @@ class ErrorState extends GameState {
    */
   getErrorInfo() {
     return {
-      message: this.error.message,
-      timestamp: new Date(),
+      error: this.error.message,
+      stack: this.error.stack,
+      errorTime: this.errorTime,
       state: this.getName()
     };
   }
@@ -272,11 +314,9 @@ class ErrorState extends GameState {
  */
 class GameStateMachine {
   constructor(initialState) {
-    this.currentState = initialState;
-    this.stateHistory = [{ 
-      name: initialState.getName(),
-      timestamp: new Date()
-    }];
+    this.currentState = initialState || new InitializationState();
+    this.stateHistory = [this.currentState];
+    this.maxHistorySize = 10;
   }
 
   /**
@@ -284,37 +324,33 @@ class GameStateMachine {
    * @param {GameState} newState - State to transition to
    */
   setState(newState) {
-    if (this.currentState) {
-      this.currentState.exit();
+    if (this.currentState && newState && typeof newState.getName === 'function') {
+      console.log(`State transition: ${this.currentState.getName()} -> ${newState.getName()}`);
     }
     
     this.currentState = newState;
-    this.stateHistory.push({
-      name: newState.getName(),
-      timestamp: new Date()
-    });
     
-    this.currentState.enter();
+    // Add to history
+    this.stateHistory.push(newState);
+    if (this.stateHistory.length > this.maxHistorySize) {
+      this.stateHistory = this.stateHistory.slice(-this.maxHistorySize);
+    }
   }
 
   /**
    * Execute current state
    */
-  handle(input) {
-    if (!this.currentState) {
-      throw new Error('No current state');
+  handle(context, input) {
+    if (this.currentState.handle.length === 0) {
+      // State doesn't expect arguments
+      return this.currentState.handle();
+    } else if (this.currentState.handle.length === 1) {
+      // State expects one argument (context or input)
+      return this.currentState.handle(context || input);
+    } else {
+      // State expects multiple arguments
+      return this.currentState.handle(context, input);
     }
-    
-    const result = this.currentState.handle(input);
-    
-    if (this.currentState.checkTransition) {
-      const nextState = this.currentState.checkTransition();
-      if (nextState) {
-        this.setState(nextState);
-      }
-    }
-    
-    return result;
   }
 
   /**
@@ -322,7 +358,7 @@ class GameStateMachine {
    * @returns {string} Current state name
    */
   getStateName() {
-    return this.currentState ? this.currentState.getName() : 'None';
+    return this.currentState ? this.currentState.getName() : 'Unknown';
   }
 
   /**
@@ -338,7 +374,7 @@ class GameStateMachine {
    * @returns {string[]} Array of state names
    */
   getStateHistory() {
-    return this.stateHistory;
+    return this.stateHistory.map(state => state.getName());
   }
 
   /**
@@ -351,64 +387,6 @@ class GameStateMachine {
   }
 }
 
-class SetupState extends GameState {
-  constructor(game) {
-    super(game);
-  }
-
-  enter() {
-    this.game.notify('setup', { message: 'Place your ships' });
-  }
-
-  handleInput(input) {
-    switch (input) {
-      case 'start':
-        this.game.setState(new PlayState(this.game));
-        break;
-      case 'quit':
-        this.game.quit();
-        break;
-      default:
-        this.game.notify('error', { message: 'Invalid command in Setup state' });
-    }
-  }
-}
-
-class PlayState extends GameState {
-  constructor(game) {
-    super(game);
-  }
-
-  enter() {
-    this.game.notify('play', { message: 'Your turn to attack' });
-  }
-
-  handleInput(input) {
-    if (!input || input.trim() === '') {
-      this.game.notify('error', { message: 'Invalid input' });
-      return;
-    }
-
-    const coordinate = input.trim().toUpperCase();
-    const result = this.game.processPlayerMove(coordinate);
-    
-    if (result.success) {
-      if (result.hit) {
-        this.game.notify('hit', { coordinate });
-        if (result.sunk) {
-          this.game.notify('shipSunk', { ship: result.ship });
-        }
-      } else {
-        this.game.notify('miss', { coordinate });
-      }
-      
-      this.game.setState(new CPUTurnState(this.game));
-    } else {
-      this.game.notify('error', { message: result.error });
-    }
-  }
-}
-
 module.exports = {
   GameState,
   InitializationState,
@@ -418,7 +396,5 @@ module.exports = {
   GameStateMachine,
   PlayingState,
   PausedState,
-  ErrorState,
-  SetupState,
-  PlayState
+  ErrorState
 }; 

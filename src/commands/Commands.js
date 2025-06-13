@@ -8,7 +8,6 @@
  */
 
 const GameConfig = require('../config/GameConfig');
-const { HuntStrategy } = require('../ai/AIStrategy');
 
 /**
  * Abstract base class for all commands
@@ -19,7 +18,7 @@ class Command {
    * @returns {*} Command execution result
    */
   execute() {
-    throw new Error('execute() must be implemented');
+    throw new Error('Command must implement execute method');
   }
   
   /**
@@ -27,7 +26,7 @@ class Command {
    * @returns {*} Undo result
    */
   undo() {
-    throw new Error('undo() must be implemented');
+    throw new Error('Command must implement undo method');
   }
 
   /**
@@ -57,6 +56,7 @@ class PlayerMoveCommand extends Command {
     this.coordinate = coordinate;
     this.gameState = gameState;
     this.wasHit = false;
+    this.hitShip = null;
     this.previousState = null;
   }
   
@@ -65,37 +65,35 @@ class PlayerMoveCommand extends Command {
    * @returns {boolean} True if move was a hit
    */
   execute() {
-    if (!this.coordinate || !this.gameState) {
-      throw new Error('Invalid command parameters');
-    }
-
-    // Save previous state for undo
+    this.executedAt = new Date();
+    const config = new GameConfig();
+    const [row, col] = [parseInt(this.coordinate[0]), parseInt(this.coordinate[1])];
+    
+    // Store previous state for undo
     this.previousState = {
-      playerGuesses: new Set(this.gameState.playerGuesses),
-      cpuBoard: {
-        hits: new Set(this.gameState.cpuBoard.hits),
-        misses: new Set(this.gameState.cpuBoard.misses)
-      }
+      cpuNumShips: this.gameState.cpuNumShips,
+      boardState: this.gameState.cpuBoard.grid.map(row => [...row])
     };
-
-    // Add guess to history
+    
     this.gameState.playerGuesses.add(this.coordinate);
-
-    // Check if hit
-    const ship = this.gameState.cpuBoard.getShipAt(this.coordinate);
-    this.wasHit = ship !== null;
-
-    // Update board state
-    if (this.wasHit) {
-      this.gameState.cpuBoard.hits.add(this.coordinate);
-      ship.hit(this.coordinate);
-      if (ship.isSunk()) {
+    this.hitShip = this.gameState.cpuBoard.getShipAt(this.coordinate);
+    
+    if (this.hitShip && !this.hitShip.isHit(this.coordinate)) {
+      this.hitShip.hit(this.coordinate);
+      this.gameState.cpuBoard.markHit(row, col);
+      this.wasHit = true;
+      
+      console.log(config.getMessage('playerHit'));
+      
+      if (this.hitShip.isSunk()) {
+        console.log(config.getMessage('shipSunk'));
         this.gameState.cpuNumShips--;
       }
     } else {
-      this.gameState.cpuBoard.misses.add(this.coordinate);
+      this.gameState.cpuBoard.markMiss(row, col);
+      console.log(config.getMessage('playerMiss'));
     }
-
+    
     return this.wasHit;
   }
 
@@ -108,10 +106,17 @@ class PlayerMoveCommand extends Command {
       return false;
     }
 
-    this.gameState.playerGuesses = this.previousState.playerGuesses;
-    this.gameState.cpuBoard.hits = this.previousState.cpuBoard.hits;
-    this.gameState.cpuBoard.misses = this.previousState.cpuBoard.misses;
+    // Restore game state
+    this.gameState.cpuNumShips = this.previousState.cpuNumShips;
+    this.gameState.cpuBoard.grid = this.previousState.boardState;
+    this.gameState.playerGuesses.delete(this.coordinate);
 
+    // Restore ship state if it was hit
+    if (this.hitShip && this.wasHit) {
+      this.hitShip.hits.delete(this.coordinate);
+    }
+
+    console.log(`Undid move at ${this.coordinate}`);
     return true;
   }
 }
@@ -131,9 +136,8 @@ class CPUMoveCommand extends Command {
     this.gameState = gameState;
     this.coordinate = null;
     this.wasHit = false;
-    this.executedAt = null;
-    this.strategy = 'hunt';
-    this.previousState = null;
+    this.hitShip = null;
+    this.moveDecision = null;
   }
   
   /**
@@ -141,52 +145,38 @@ class CPUMoveCommand extends Command {
    * @returns {boolean} True if move was a hit
    */
   execute() {
-    if (!this.aiContext || !this.gameState) {
-      throw new Error('Invalid command parameters');
-    }
-
-    // Save previous state
-    this.previousState = {
-      cpuGuesses: new Set(this.gameState.cpuGuesses),
-      playerBoard: {
-        hits: new Set(this.gameState.playerBoard.hits),
-        misses: new Set(this.gameState.playerBoard.misses)
-      }
-    };
-
-    // Get AI move
-    const move = this.aiContext.makeMove(this.gameState);
-    this.coordinate = move.coordinate;
     this.executedAt = new Date();
-    this.strategy = move.strategy;
-
+    const config = new GameConfig();
+    
+    console.log("\n--- CPU's Turn ---");
+    
+    this.moveDecision = this.aiContext.makeMove(this.gameState);
+    this.coordinate = this.moveDecision.coordinate;
+    
+    const [row, col] = [parseInt(this.coordinate[0]), parseInt(this.coordinate[1])];
+    
     this.gameState.cpuGuesses.add(this.coordinate);
-
-    // Check if hit
-    const ship = this.gameState.playerBoard.getShipAt(this.coordinate);
-    this.wasHit = ship !== null;
-
-    // Update board state
-    if (this.wasHit) {
-      this.gameState.playerBoard.hits.add(this.coordinate);
-      ship.hit(this.coordinate);
-      if (ship.isSunk()) {
+    this.hitShip = this.gameState.playerBoard.getShipAt(this.coordinate);
+    
+    if (this.hitShip && !this.hitShip.isHit(this.coordinate)) {
+      this.hitShip.hit(this.coordinate);
+      this.gameState.playerBoard.markHit(row, col);
+      this.wasHit = true;
+      
+      console.log(config.getMessage('cpuHit', { coordinate: this.coordinate }));
+      
+      if (this.hitShip.isSunk()) {
+        console.log(config.getMessage('cpuShipSunk'));
         this.gameState.playerNumShips--;
-        if (this.aiContext.updateResult) {
-          this.aiContext.updateResult(this.coordinate, true, true);
-        }
+        this.aiContext.switchToHunt();
       } else {
-        if (this.aiContext.updateResult) {
-          this.aiContext.updateResult(this.coordinate, true, false);
-        }
+        this.aiContext.switchToTarget(row, col, this.gameState);
       }
     } else {
-      this.gameState.playerBoard.misses.add(this.coordinate);
-      if (this.aiContext.updateResult) {
-        this.aiContext.updateResult(this.coordinate, false, false);
-      }
+      this.gameState.playerBoard.markMiss(row, col);
+      console.log(config.getMessage('cpuMiss', { coordinate: this.coordinate }));
     }
-
+    
     return this.wasHit;
   }
 
@@ -198,28 +188,10 @@ class CPUMoveCommand extends Command {
     return {
       coordinate: this.coordinate,
       wasHit: this.wasHit,
-      strategy: this.strategy,
-      executedAt: this.executedAt,
-      aiState: {
-        mode: this.strategy || 'hunt'
-      }
+      strategy: this.moveDecision?.mode,
+      aiState: this.aiContext.getStats?.() || {},
+      executedAt: this.executedAt
     };
-  }
-
-  /**
-   * Undo the CPU move
-   * @returns {boolean} True if undo was successful
-   */
-  undo() {
-    if (!this.previousState) {
-      return false;
-    }
-
-    this.gameState.cpuGuesses = this.previousState.cpuGuesses;
-    this.gameState.playerBoard.hits = this.previousState.playerBoard.hits;
-    this.gameState.playerBoard.misses = this.previousState.playerBoard.misses;
-
-    return true;
   }
 }
 
@@ -234,7 +206,7 @@ class InitializeGameCommand extends Command {
   constructor(game) {
     super();
     this.game = game;
-    this.previousState = null;
+    this.initialized = false;
   }
 
   /**
@@ -242,44 +214,20 @@ class InitializeGameCommand extends Command {
    * @returns {boolean} True if initialization successful
    */
   execute() {
-    if (!this.game) {
-      throw new Error('Invalid game instance');
+    this.executedAt = new Date();
+    
+    try {
+      console.log('Boards created.');
+      this.game.placeShipsRandomly();
+      console.log("\nLet's play Sea Battle!");
+      console.log(`Try to sink the ${this.game.cpuNumShips} enemy ships.`);
+      
+      this.initialized = true;
+      return true;
+    } catch (error) {
+      console.error('Failed to initialize game:', error.message);
+      return false;
     }
-
-    // Save previous state
-    this.previousState = {
-      playerBoard: this.game.playerBoard ? { ...this.game.playerBoard } : null,
-      cpuBoard: this.game.cpuBoard ? { ...this.game.cpuBoard } : null,
-      currentState: this.game.currentState,
-      playerNumShips: this.game.playerNumShips,
-      cpuNumShips: this.game.cpuNumShips
-    };
-
-    const config = new GameConfig();
-    const boardSize = config.get('boardSize');
-
-    this.game.playerBoard = {
-      size: boardSize,
-      ships: [],
-      hits: new Set(),
-      misses: new Set(),
-      getShipAt: (coord) => this.game.playerBoard.ships.find(s => s.locations.includes(coord))
-    };
-
-    this.game.cpuBoard = {
-      size: boardSize,
-      ships: [],
-      hits: new Set(),
-      misses: new Set(),
-      getShipAt: (coord) => this.game.cpuBoard.ships.find(s => s.locations.includes(coord))
-    };
-
-    this.game.playerNumShips = 0;
-    this.game.cpuNumShips = 0;
-    this.game.playerGuesses = new Set();
-    this.game.cpuGuesses = new Set();
-
-    return true;
   }
 
   /**
@@ -287,16 +235,18 @@ class InitializeGameCommand extends Command {
    * @returns {boolean} True if reset successful
    */
   undo() {
-    if (!this.previousState) {
+    if (!this.initialized) {
       return false;
     }
 
-    this.game.playerBoard = this.previousState.playerBoard;
-    this.game.cpuBoard = this.previousState.cpuBoard;
-    this.game.currentState = this.previousState.currentState;
-    this.game.playerNumShips = this.previousState.playerNumShips;
-    this.game.cpuNumShips = this.previousState.cpuNumShips;
-
+    // Reset game boards and state
+    this.game.playerBoard.reset();
+    this.game.cpuBoard.reset();
+    this.game.playerGuesses.clear();
+    this.game.cpuGuesses.clear();
+    
+    this.initialized = false;
+    console.log('Game reset to initial state');
     return true;
   }
 }
@@ -352,133 +302,12 @@ class DisplayBoardsCommand extends Command {
 }
 
 /**
- * Command for attacking a board
- */
-class AttackCommand extends Command {
-  constructor(board, coordinate) {
-    super();
-    this.board = board;
-    this.coordinate = coordinate;
-    this.previousState = null;
-  }
-
-  execute() {
-    if (!this.board || !this.coordinate) {
-      throw new Error('Invalid command parameters');
-    }
-
-    // Save previous state
-    this.previousState = {
-      hits: new Set(this.board.hits),
-      misses: new Set(this.board.misses)
-    };
-
-    // Check if hit
-    const ship = this.board.getShipAt(this.coordinate);
-    const isHit = ship !== null;
-
-    // Update board state
-    if (isHit) {
-      this.board.hits.add(this.coordinate);
-      ship.hit(this.coordinate);
-    } else {
-      this.board.misses.add(this.coordinate);
-    }
-
-    return { hit: isHit };
-  }
-
-  undo() {
-    if (!this.previousState) {
-      return false;
-    }
-
-    this.board.hits = this.previousState.hits;
-    this.board.misses = this.previousState.misses;
-
-    return true;
-  }
-}
-
-/**
- * Command for placing a ship
- */
-class PlaceShipCommand extends Command {
-  constructor(board, ship) {
-    super();
-    this.board = board;
-    this.ship = ship;
-    this.previousState = null;
-  }
-
-  execute() {
-    if (!this.board || !this.ship) {
-      throw new Error('Invalid command parameters');
-    }
-
-    // Save previous state
-    this.previousState = {
-      ships: [...this.board.ships]
-    };
-
-    // Validate ship placement
-    const isValid = !this.board.ships.some(existingShip => {
-      return existingShip.locations.some(loc => this.ship.locations.includes(loc));
-    });
-
-    if (!isValid) {
-      return { success: false, error: 'Invalid ship placement - overlapping ships' };
-    }
-
-    this.board.ships.push(this.ship);
-    return { success: true };
-  }
-
-  undo() {
-    if (!this.previousState) {
-      return false;
-    }
-
-    this.board.ships = this.previousState.ships;
-    return true;
-  }
-}
-
-/**
- * Command for quitting the game
- */
-class QuitCommand extends Command {
-  constructor(game) {
-    super();
-    this.game = game;
-    this.previousState = null;
-  }
-
-  execute() {
-    if (!this.game) {
-      throw new Error('Game object required');
-    }
-
-    try {
-      this.game.notify('gameQuit');
-      this.game.cleanup();
-      return true;
-    } catch (error) {
-      return false;
-    }
-  }
-
-  undo() {
-    return false; // Quit cannot be undone
-  }
-}
-
-/**
  * Command invoker for managing command execution
  */
 class CommandInvoker {
   constructor() {
     this.history = [];
+    this.currentIndex = -1;
   }
 
   /**
@@ -488,7 +317,11 @@ class CommandInvoker {
    */
   execute(command) {
     const result = command.execute();
+    
+    // Add to history
     this.history.push(command);
+    this.currentIndex = this.history.length - 1;
+    
     return result;
   }
 
@@ -497,11 +330,36 @@ class CommandInvoker {
    * @returns {boolean} True if undo was successful
    */
   undo() {
-    if (this.history.length === 0) {
-      return false;
+    if (this.currentIndex >= 0) {
+      const command = this.history[this.currentIndex];
+      const result = command.undo();
+      if (result) {
+        this.currentIndex--;
+      }
+      return result;
     }
-    const command = this.history.pop();
-    return command.undo();
+    return false;
+  }
+
+  /**
+   * Redo the next command
+   * @returns {boolean} True if redo was successful
+   */
+  redo() {
+    if (this.currentIndex < this.history.length - 1) {
+      this.currentIndex++;
+      const command = this.history[this.currentIndex];
+      return command.execute();
+    }
+    return false;
+  }
+
+  /**
+   * Get command history
+   * @returns {Command[]} Array of executed commands
+   */
+  getHistory() {
+    return [...this.history];
   }
 
   /**
@@ -509,7 +367,7 @@ class CommandInvoker {
    */
   clearHistory() {
     this.history = [];
-    return true;
+    this.currentIndex = -1;
   }
 }
 
@@ -519,8 +377,5 @@ module.exports = {
   CPUMoveCommand,
   InitializeGameCommand,
   DisplayBoardsCommand,
-  AttackCommand,
-  PlaceShipCommand,
-  QuitCommand,
   CommandInvoker
 }; 
