@@ -8,27 +8,43 @@ class ProbabilityStrategy {
     
     // Find coordinate with highest probability
     let maxProb = 0;
-    let bestMove = null;
+    let bestMoves = [];
     
     Object.entries(this.probabilities).forEach(([coord, prob]) => {
-      if (prob > maxProb && !gameState.cpuGuesses.has(coord)) {
-        maxProb = prob;
-        bestMove = coord;
+      if (!gameState.cpuGuesses.has(coord)) {
+        if (prob > maxProb) {
+          maxProb = prob;
+          bestMoves = [coord];
+        } else if (prob === maxProb) {
+          bestMoves.push(coord);
+        }
       }
     });
     
     // If no valid move found, fall back to random
-    if (!bestMove) {
+    if (bestMoves.length === 0) {
       const size = gameState.playerBoard.size;
-      let row, col;
-      do {
-        row = Math.floor(Math.random() * size);
-        col = Math.floor(Math.random() * size);
-        bestMove = `${row}${col}`;
-      } while (gameState.cpuGuesses.has(bestMove));
+      const allCoordinates = [];
+      for (let row = 0; row < size; row++) {
+        for (let col = 0; col < size; col++) {
+          const coordinate = `${row}${col}`;
+          if (!gameState.cpuGuesses.has(coordinate)) {
+            allCoordinates.push(coordinate);
+          }
+        }
+      }
+
+      if (allCoordinates.length === 0) {
+        throw new Error('No valid moves remaining');
+      }
+
+      const randomIndex = Math.floor(Math.random() * allCoordinates.length);
+      return allCoordinates[randomIndex];
     }
     
-    return bestMove;
+    // Pick a random move from the best moves
+    const randomIndex = Math.floor(Math.random() * bestMoves.length);
+    return bestMoves[randomIndex];
   }
 
   calculateProbabilities(gameState) {
@@ -52,17 +68,23 @@ class ProbabilityStrategy {
         // Check horizontal placement
         if (col + shipLength <= size) {
           let valid = true;
+          let hasGuess = false;
           for (let i = 0; i < shipLength; i++) {
             const coord = `${row}${col + i}`;
             if (gameState.cpuGuesses.has(coord)) {
-              valid = false;
-              break;
+              if (hasGuess) {
+                valid = false;
+                break;
+              }
+              hasGuess = true;
             }
           }
           if (valid) {
             for (let i = 0; i < shipLength; i++) {
               const coord = `${row}${col + i}`;
-              this.probabilities[coord] = (this.probabilities[coord] || 0) + 1;
+              if (!gameState.cpuGuesses.has(coord)) {
+                this.probabilities[coord] = (this.probabilities[coord] || 0) + (hasGuess ? 2 : 1);
+              }
             }
           }
         }
@@ -70,17 +92,23 @@ class ProbabilityStrategy {
         // Check vertical placement
         if (row + shipLength <= size) {
           let valid = true;
+          let hasGuess = false;
           for (let i = 0; i < shipLength; i++) {
             const coord = `${row + i}${col}`;
             if (gameState.cpuGuesses.has(coord)) {
-              valid = false;
-              break;
+              if (hasGuess) {
+                valid = false;
+                break;
+              }
+              hasGuess = true;
             }
           }
           if (valid) {
             for (let i = 0; i < shipLength; i++) {
               const coord = `${row + i}${col}`;
-              this.probabilities[coord] = (this.probabilities[coord] || 0) + 1;
+              if (!gameState.cpuGuesses.has(coord)) {
+                this.probabilities[coord] = (this.probabilities[coord] || 0) + (hasGuess ? 2 : 1);
+              }
             }
           }
         }

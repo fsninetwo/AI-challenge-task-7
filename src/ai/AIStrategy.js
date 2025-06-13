@@ -29,6 +29,63 @@ class AIStrategy {
   getName() {
     return this.constructor.name;
   }
+
+  /**
+   * Generate all valid moves for the current game state
+   * @param {Object} gameState - Current game state
+   * @returns {Array} Array of valid coordinates
+   */
+  getValidMoves(gameState) {
+    const config = new GameConfig();
+    const boardSize = config.get('boardSize');
+    const moves = [];
+    
+    for (let row = 0; row < boardSize; row++) {
+      for (let col = 0; col < boardSize; col++) {
+        const coordinate = `${row}${col}`;
+        if (!gameState.cpuGuesses.has(coordinate)) {
+          moves.push(coordinate);
+        }
+      }
+    }
+    
+    return moves;
+  }
+
+  /**
+   * Check if a coordinate is valid for the current game state
+   * @param {number} row - Row coordinate
+   * @param {number} col - Column coordinate
+   * @param {Object} gameState - Current game state
+   * @returns {boolean} True if valid coordinate
+   */
+  isValidCoordinate(row, col, gameState) {
+    const config = new GameConfig();
+    const boardSize = config.get('boardSize');
+    return row >= 0 && row < boardSize && 
+           col >= 0 && col < boardSize && 
+           !gameState.cpuGuesses.has(`${row}${col}`);
+  }
+}
+
+/**
+ * Random strategy - Makes random moves across the board
+ */
+class RandomStrategy extends AIStrategy {
+  makeMove(gameState) {
+    const moves = this.getValidMoves(gameState);
+    if (moves.length === 0) {
+      throw new Error('No valid moves remaining');
+    }
+    
+    const randomIndex = Math.floor(Math.random() * moves.length);
+    return {
+      coordinate: moves[randomIndex],
+      mode: 'random',
+      strategy: this.getName(),
+      confidence: 0.1
+    };
+  }
 }
 
 /**
@@ -41,30 +98,24 @@ class HuntStrategy extends AIStrategy {
   }
 
   makeMove(gameState) {
-    const config = new GameConfig();
-    const boardSize = config.get('boardSize');
-    let guess;
+    const moves = this.getValidMoves(gameState);
+    if (moves.length === 0) {
+      throw new Error('No valid moves remaining');
+    }
     
-    // Generate random guess that hasn't been made before
-    do {
-      const row = Math.floor(Math.random() * boardSize);
-      const col = Math.floor(Math.random() * boardSize);
-      guess = `${row}${col}`;
-    } while (gameState.cpuGuesses.has(guess));
+    const randomIndex = Math.floor(Math.random() * moves.length);
+    const guess = moves[randomIndex];
     
     this.previousMoves.add(guess);
     
     return { 
       coordinate: guess, 
       mode: 'hunt',
-      strategy: this.getName(),
-      confidence: 0.1 // Low confidence for random moves
+      strategy: 'HuntStrategy',
+      confidence: 0.1
     };
   }
 
-  /**
-   * Reset strategy state
-   */
   reset() {
     this.previousMoves.clear();
   }
@@ -80,12 +131,6 @@ class TargetStrategy extends AIStrategy {
     this.hitHistory = [];
   }
   
-  /**
-   * Add adjacent targets after a successful hit
-   * @param {number} row - Row of the hit
-   * @param {number} col - Column of the hit
-   * @param {Object} gameState - Current game state
-   */
   addTargets(row, col, gameState) {
     const adjacentCells = [
       { r: row - 1, c: col, direction: 'north' },
@@ -94,138 +139,120 @@ class TargetStrategy extends AIStrategy {
       { r: row, c: col + 1, direction: 'east' }
     ];
     
-    // Add valid adjacent cells to target queue
     adjacentCells
-      .filter(({r, c}) => this.isValidTarget(r, c, gameState))
+      .filter(({r, c}) => this.isValidCoordinate(r, c, gameState))
       .forEach(({r, c, direction}) => {
         const coord = `${r}${c}`;
         if (!this.targetQueue.some(target => target.coordinate === coord)) {
+          let priority = 1;
+          if (this.hitHistory.length >= 2) {
+            const lastHits = this.hitHistory.slice(-2);
+            const [row1, col1] = lastHits[0].coordinate.split('').map(Number);
+            const [row2, col2] = lastHits[1].coordinate.split('').map(Number);
+            
+            if (row1 === row2 && r === row1) {
+              priority = 3;
+            }
+            else if (col1 === col2 && c === col1) {
+              priority = 3;
+            }
+          }
+          
           this.targetQueue.push({
             coordinate: coord,
             direction,
-            priority: 1,
+            priority,
             addedAt: Date.now()
           });
         }
       });
 
-    // Sort by priority (higher priority first)
     this.targetQueue.sort((a, b) => b.priority - a.priority);
   }
   
-  /**
-   * Check if a coordinate is a valid target
-   * @param {number} row - Row coordinate
-   * @param {number} col - Column coordinate
-   * @param {Object} gameState - Current game state
-   * @returns {boolean} True if valid target
-   */
-  isValidTarget(row, col, gameState) {
-    const config = new GameConfig();
-    const boardSize = config.get('boardSize');
-    return row >= 0 && row < boardSize && 
-           col >= 0 && col < boardSize && 
-           !gameState.cpuGuesses.has(`${row}${col}`);
-  }
-  
   makeMove(gameState) {
-    // If no targets in queue, fall back to hunt strategy
     if (this.targetQueue.length === 0) {
-      return new HuntStrategy().makeMove(gameState);
+      const huntStrategy = new HuntStrategy();
+      const move = huntStrategy.makeMove(gameState);
+      return {
+        ...move,
+        mode: 'hunt',
+        strategy: 'HuntStrategy'
+      };
     }
     
-    // Get highest priority target
     let target;
     do {
       target = this.targetQueue.shift();
-      if (this.targetQueue.length === 0 && gameState.cpuGuesses.has(target?.coordinate)) {
-        return new HuntStrategy().makeMove(gameState);
+      if (!target || gameState.cpuGuesses.has(target.coordinate)) {
+        if (this.targetQueue.length === 0) {
+          const huntStrategy = new HuntStrategy();
+          const move = huntStrategy.makeMove(gameState);
+          return {
+            ...move,
+            mode: 'hunt',
+            strategy: 'HuntStrategy'
+          };
+        }
+        continue;
       }
     } while (target && gameState.cpuGuesses.has(target.coordinate) && this.targetQueue.length > 0);
+    
+    if (!target) {
+      const huntStrategy = new HuntStrategy();
+      const move = huntStrategy.makeMove(gameState);
+      return {
+        ...move,
+        mode: 'hunt',
+        strategy: 'HuntStrategy'
+      };
+    }
     
     return { 
       coordinate: target.coordinate, 
       mode: 'target',
-      strategy: this.getName(),
+      strategy: 'TargetStrategy',
       direction: target.direction,
-      confidence: 0.8 // High confidence for targeted moves
+      confidence: 0.8
     };
   }
-  
-  /**
-   * Update strategy based on hit result
-   * @param {string} coordinate - Coordinate that was attacked
-   * @param {boolean} wasHit - Whether the attack was a hit
-   * @param {boolean} wasSunk - Whether a ship was sunk
-   */
+
   updateStrategy(coordinate, wasHit, wasSunk) {
-    if (wasHit) {
-      this.hitHistory.push({
-        coordinate,
-        timestamp: Date.now(),
-        wasSunk
-      });
-
-      // If ship was sunk, clear targets and history
-      if (wasSunk) {
-        this.reset();
-      } else {
-        // Increase priority of targets in same direction as successful hits
-        const [row, col] = coordinate.split('').map(Number);
-        this.prioritizeDirectionalTargets(row, col);
-      }
+    if (wasHit && !wasSunk) {
+      this.hitHistory.push({ coordinate, timestamp: Date.now() });
+    }
+    if (wasSunk) {
+      this.targetQueue = [];
+      this.hitHistory = [];
     }
   }
 
-  /**
-   * Increase priority of targets in promising directions
-   * @param {number} row - Row of successful hit
-   * @param {number} col - Column of successful hit
-   */
   prioritizeDirectionalTargets(row, col) {
-    // Analyze hit pattern to determine ship orientation
-    if (this.hitHistory.length >= 2) {
-      const lastHits = this.hitHistory.slice(-2);
-      const [row1, col1] = lastHits[0].coordinate.split('').map(Number);
-      const [row2, col2] = lastHits[1].coordinate.split('').map(Number);
-      
-      let orientation = null;
-      if (row1 === row2) orientation = 'horizontal';
-      if (col1 === col2) orientation = 'vertical';
-      
-      // Boost priority for targets that align with detected orientation
-      this.targetQueue.forEach(target => {
-        const [targetRow, targetCol] = target.coordinate.split('').map(Number);
-        if (orientation === 'horizontal' && targetRow === row) {
-          target.priority += 2;
-        } else if (orientation === 'vertical' && targetCol === col) {
-          target.priority += 2;
-        }
+    const [lastHitRow, lastHitCol] = this.hitHistory[this.hitHistory.length - 1].coordinate.split('').map(Number);
+    
+    if (row === lastHitRow) {
+      this.targetQueue = this.targetQueue.filter(t => {
+        const [tRow] = t.coordinate.split('').map(Number);
+        return tRow === row;
       });
-      
-      // Re-sort queue
-      this.targetQueue.sort((a, b) => b.priority - a.priority);
+    }
+    else if (col === lastHitCol) {
+      this.targetQueue = this.targetQueue.filter(t => {
+        const [_, tCol] = t.coordinate.split('').map(Number);
+        return tCol === col;
+      });
     }
   }
-  
-  /**
-   * Reset strategy state
-   */
+
   reset() {
     this.targetQueue = [];
     this.hitHistory = [];
   }
 
-  /**
-   * Get current strategy state for debugging
-   * @returns {Object} Strategy state information
-   */
   getState() {
     return {
-      targetQueueLength: this.targetQueue.length,
-      hitHistoryLength: this.hitHistory.length,
-      nextTarget: this.targetQueue[0]?.coordinate,
-      recentHits: this.hitHistory.slice(-3)
+      targetQueue: [...this.targetQueue],
+      hitHistory: [...this.hitHistory]
     };
   }
 }
@@ -238,118 +265,72 @@ class AIContext {
     this.huntStrategy = new HuntStrategy();
     this.targetStrategy = new TargetStrategy();
     this.currentStrategy = this.huntStrategy;
-    this.moveHistory = [];
-    this.performanceStats = {
-      hits: 0,
-      misses: 0,
-      shipsFound: 0,
-      shipsSunk: 0
-    };
+    this.lastMove = null;
   }
-  
-  /**
-   * Switch to hunt mode
-   */
+
   switchToHunt() {
     this.currentStrategy = this.huntStrategy;
-    this.targetStrategy.reset();
   }
-  
-  /**
-   * Switch to target mode after a hit
-   * @param {number} row - Row of the hit
-   * @param {number} col - Column of the hit
-   * @param {Object} gameState - Current game state
-   */
+
   switchToTarget(row, col, gameState) {
     this.currentStrategy = this.targetStrategy;
     this.targetStrategy.addTargets(row, col, gameState);
   }
-  
-  /**
-   * Make a move using current strategy
-   * @param {Object} gameState - Current game state
-   * @returns {Object} Move decision
-   */
+
   makeMove(gameState) {
     const move = this.currentStrategy.makeMove(gameState);
-    
-    // Log move for analysis
-    this.moveHistory.push({
-      ...move,
-      timestamp: Date.now(),
-      gameState: {
-        playerShips: gameState.playerNumShips,
-        cpuShips: gameState.cpuNumShips
-      }
-    });
-    
-    return move;
+    this.lastMove = {
+      coordinate: move.coordinate,
+      wasHit: false,
+      strategy: move.mode,
+      executedAt: new Date()
+    };
+    return this.lastMove;
   }
 
-  /**
-   * Update AI context based on move result
-   * @param {string} coordinate - Coordinate that was attacked
-   * @param {boolean} wasHit - Whether the attack was a hit
-   * @param {boolean} wasSunk - Whether a ship was sunk
-   */
   updateResult(coordinate, wasHit, wasSunk) {
-    // Update performance stats
-    if (wasHit) {
-      this.performanceStats.hits++;
-      if (wasSunk) {
-        this.performanceStats.shipsSunk++;
-      }
-    } else {
-      this.performanceStats.misses++;
+    if (this.lastMove) {
+      this.lastMove.wasHit = wasHit;
     }
-
-    // Update current strategy
+    
     if (this.currentStrategy instanceof TargetStrategy) {
       this.currentStrategy.updateStrategy(coordinate, wasHit, wasSunk);
-    }
-
-    // Update last move result
-    if (this.moveHistory.length > 0) {
-      const lastMove = this.moveHistory[this.moveHistory.length - 1];
-      lastMove.result = { wasHit, wasSunk };
+      if (wasSunk) {
+        this.switchToHunt();
+      }
     }
   }
 
-  /**
-   * Get AI performance statistics
-   * @returns {Object} Performance statistics
-   */
-  getStats() {
-    const totalMoves = this.performanceStats.hits + this.performanceStats.misses;
+  getMoveAnalysis() {
     return {
-      ...this.performanceStats,
-      totalMoves,
-      accuracy: totalMoves > 0 ? (this.performanceStats.hits / totalMoves * 100) : 0,
-      currentStrategy: this.currentStrategy.getName(),
-      moveHistory: this.moveHistory.slice(-10) // Last 10 moves
+      coordinate: this.lastMove?.coordinate,
+      wasHit: this.lastMove?.wasHit,
+      strategy: this.lastMove?.strategy,
+      executedAt: this.lastMove?.executedAt,
+      aiState: {
+        mode: this.lastMove?.strategy || 'hunt'
+      }
     };
   }
 
-  /**
-   * Reset AI context to initial state
-   */
+  getStats() {
+    return {
+      mode: this.currentStrategy instanceof HuntStrategy ? 'hunt' : 'target',
+      targetState: this.currentStrategy instanceof TargetStrategy ? this.currentStrategy.getState() : null
+    };
+  }
+
   reset() {
     this.huntStrategy.reset();
     this.targetStrategy.reset();
     this.currentStrategy = this.huntStrategy;
-    this.moveHistory = [];
-    this.performanceStats = {
-      hits: 0,
-      misses: 0,
-      shipsFound: 0,
-      shipsSunk: 0
-    };
+    this.lastMove = null;
   }
 }
 
 module.exports = {
   AIStrategy,
+  RandomStrategy,
   HuntStrategy,
   TargetStrategy,
   AIContext

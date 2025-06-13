@@ -48,7 +48,7 @@ class GameConfig {
    */
   get(key) {
     if (key.includes('.')) {
-      return key.split('.').reduce((obj, k) => obj[k], this.settings);
+      return key.split('.').reduce((obj, k) => obj && obj[k], this.settings);
     }
     return this.settings[key];
   }
